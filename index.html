@@ -42,6 +42,10 @@
       </label>
       <div id="player-names" class="names"></div>
       <label class="field">
+        <span>Starting life</span>
+        <input id="setup-life" type="number" inputmode="numeric" min="1" max="999" step="1" class="narrow">
+      </label>
+      <label class="field">
         <span>Time profile</span>
         <select id="setup-profile"></select>
       </label>
@@ -94,22 +98,37 @@
   </section>
 
   <!-- GAME -->
-  <section id="screen-game" class="screen game hidden">
-    <header class="bar game-bar">
-      <button id="btn-end" class="btn btn-ghost btn-small">End game</button>
-      <div class="turn">Turn <strong id="game-turn">1</strong></div>
-      <div class="profile-tag small muted" id="game-profile"></div>
-    </header>
-    <div class="game-main">
-      <div id="game-player" class="player-name">Player 1</div>
-      <button id="game-timer" class="timer" aria-label="Start or pause the timer">3:00</button>
-      <div class="hold-track"><div id="hold-bar" class="hold-bar"></div></div>
-      <div id="game-hint" class="muted small hint">Tap the timer to start</div>
+  <section id="screen-game" class="screen game side-layout hidden">
+    <div class="side-main">
+      <header class="bar game-bar">
+        <button id="btn-end" class="btn btn-ghost btn-small">End game</button>
+        <div class="turn">Turn <strong id="game-turn">1</strong></div>
+        <div class="profile-tag small muted" id="game-profile"></div>
+      </header>
+      <div class="game-main">
+        <div id="game-player" class="player-name">Player 1</div>
+        <button id="game-timer" class="timer" aria-label="Start or pause the timer">3:00</button>
+        <div class="hold-track"><div id="hold-bar" class="hold-bar"></div></div>
+        <div id="game-hint" class="muted small hint">Tap the timer to start</div>
+      </div>
+      <footer class="bar bar-bottom two game-actions">
+        <button id="btn-undo" class="btn btn-big">↶ Undo</button>
+        <button id="btn-next" class="btn btn-primary btn-big">Next player ›</button>
+      </footer>
     </div>
-    <footer class="bar bar-bottom two game-actions">
-      <button id="btn-undo" class="btn btn-big">↶ Undo</button>
-      <button id="btn-next" class="btn btn-primary btn-big">Next player ›</button>
-    </footer>
+    <button id="btn-to-life" class="side-btn" aria-label="Life"><svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path fill="currentColor" d="M12 21s-7.5-4.6-10-9.3C.4 8.4 2.3 4.5 6 4.5c2.1 0 3.4 1.1 4.2 2.3h3.6c.8-1.2 2.1-2.3 4.2-2.3 3.7 0 5.6 3.9 4 7.2C19.5 16.4 12 21 12 21z"/></svg></button>
+  </section>
+
+  <!-- LIFE -->
+  <section id="screen-life" class="screen game side-layout hidden">
+    <button id="btn-to-time" class="side-btn" aria-label="Time"><svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 2h12M6 22h12M7 2v4.5a5 5 0 0 0 2.2 4.1L12 12l2.8 1.4A5 5 0 0 1 17 17.5V22M17 2v4.5a5 5 0 0 1-2.2 4.1L12 12l-2.8 1.4A5 5 0 0 0 7 17.5V22"/></svg></button>
+    <div class="side-main">
+      <header class="life-head">
+        <div class="small muted">Turn <strong id="life-turn">1</strong> · <span id="life-current"></span></div>
+        <div id="life-timer" class="mini-timer">3:00</div>
+      </header>
+      <div id="life-list" class="life-list"></div>
+    </div>
   </section>
 
   <!-- END OF GAME -->
@@ -149,6 +168,10 @@
     </header>
     <div class="content">
       <p id="detail-meta" class="muted small"></p>
+      <div class="seg">
+        <button id="seg-times" class="btn selected">Times</button>
+        <button id="seg-life" class="btn">Life</button>
+      </div>
       <div id="detail-table" class="table-wrap"></div>
     </div>
     <footer class="bar bar-bottom">

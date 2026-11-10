@@ -10,6 +10,7 @@ const KEY_GAME = 'ctt.game';
 const KEY_SETUP = 'ctt.lastSetup';
 const KEY_HISTORY = 'ctt.history';
 const DEFAULT_HOLD_SECONDS = 4;
+const DEFAULT_LIFE = 40;
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 8;
 
@@ -110,12 +111,13 @@ function profileSummary(entries) {
 
 /* ---------- DOM ---------- */
 const $ = (id) => document.getElementById(id);
-const screens = ['menu', 'setup', 'profiles', 'editor', 'game', 'end', 'history', 'detail'];
+const screens = ['menu', 'setup', 'profiles', 'editor', 'game', 'life', 'end', 'history', 'detail'];
 
 function show(name) {
   for (const s of screens) $('screen-' + s).classList.toggle('hidden', s !== name);
   document.body.classList.remove('overtime');
-  if (name === 'game') { acquireWakeLock(); } else { releaseWakeLock(); }
+  if (name === 'game' || name === 'life') { acquireWakeLock(); } else { releaseWakeLock(); }
+  if (name === 'life') renderLife(true);
   if (name === 'menu') renderMenu();
   window.scrollTo(0, 0);
 }
@@ -142,6 +144,7 @@ let setupNames = [];
 function openSetup() {
   const last = store.get(KEY_SETUP, null);
   setupCount = last && last.count ? last.count : 4;
+  $('setup-life').value = last && Number.isInteger(last.startingLife) ? last.startingLife : DEFAULT_LIFE;
   setupNames = last && Array.isArray(last.names) ? last.names.slice() : [];
   const profiles = loadProfiles();
   const sel = $('setup-profile');
@@ -188,8 +191,17 @@ $('btn-start').addEventListener('click', () => {
     const n = (setupNames[i] || '').trim();
     names.push(n || `Player ${i + 1}`);
   }
-  store.set(KEY_SETUP, { count: setupCount, names: setupNames.slice(0, setupCount), profileId: profile.id });
-  startGame(names, profile);
+  const startingLife = Number($('setup-life').value);
+  if (!Number.isInteger(startingLife) || startingLife < 1 || startingLife > 999) {
+    $('setup-life').focus();
+    $('setup-life').classList.add('invalid');
+    return;
+  }
+  $('setup-life').classList.remove('invalid');
+  store.set(KEY_SETUP, {
+    count: setupCount, names: setupNames.slice(0, setupCount), profileId: profile.id, startingLife,
+  });
+  startGame(names, profile, startingLife);
 });
 
 /* ---------- PROFILES LIST ---------- */
@@ -379,7 +391,8 @@ function armConfirm(btn, confirmText, action) {
  *   remainingMs, runningSince,        (countdown; runningSince = epoch ms | null)
  *   usedMs,                           (real running time of the current player's turn, pauses excluded)
  *   alerted,                          (vibration done for this countdown)
- *   log: [{ turn, player, ms }],      (completed player-turns)
+ *   startingLife, life: [n per player], out: [turn eliminated | null per player],
+ *   log: [{ turn, player, ms, life: [...] }],   (completed player-turns; life snapshot at Next)
  *   history: [{ turn, player, remainingMs, usedMs, alerted }]   (undo stack)
  * }
  */
@@ -418,13 +431,16 @@ function loadGame() {
   g.usedMs = g.usedMs || 0;
   g.log = Array.isArray(g.log) ? g.log : [];
   g.history = (g.history || []).map((h) => ({ usedMs: 0, ...h }));
+  g.startingLife = Number.isInteger(g.startingLife) ? g.startingLife : DEFAULT_LIFE;
+  if (!Array.isArray(g.life) || g.life.length !== g.players.length) g.life = g.players.map(() => g.startingLife);
+  if (!Array.isArray(g.out) || g.out.length !== g.players.length) g.out = g.players.map(() => null);
   game = g;
   renderGame();
   startTicking();
   return true;
 }
 
-function startGame(names, profile) {
+function startGame(names, profile, startingLife = DEFAULT_LIFE) {
   game = {
     id: uid(),
     startedAt: now(),
@@ -438,6 +454,9 @@ function startGame(names, profile) {
     runningSince: null,
     usedMs: 0,
     alerted: false,
+    startingLife,
+    life: names.map(() => startingLife),
+    out: names.map(() => null),
     log: [],
     history: [],
   };
@@ -461,7 +480,7 @@ function toggleRunning() {
 function nextPlayer() {
   if (!game) return;
   settle();
-  game.log.push({ turn: game.turn, player: game.player, ms: game.usedMs });
+  game.log.push({ turn: game.turn, player: game.player, ms: game.usedMs, life: game.life.slice() });
   game.history.push({
     turn: game.turn,
     player: game.player,
@@ -470,11 +489,18 @@ function nextPlayer() {
     alerted: game.alerted,
   });
 
-  game.player += 1;
-  if (game.player >= game.players.length) {
-    game.player = 0;
-    game.turn += 1;
-  }
+  // Advance to the next player still in the game; passing the last seat starts a new turn.
+  const n = game.players.length;
+  const anyActive = game.out.some((o) => o == null);
+  let steps = 0;
+  do {
+    game.player += 1;
+    if (game.player >= n) {
+      game.player = 0;
+      game.turn += 1;
+    }
+    steps += 1;
+  } while (anyActive && game.out[game.player] != null && steps <= n);
   game.remainingMs = secondsForTurn(game.entries, game.turn) * 1000;
   game.usedMs = 0;
   game.runningSince = now();
@@ -514,6 +540,7 @@ function renderGame() {
   $('game-turn').textContent = game.turn;
   $('game-player').textContent = game.players[game.player];
   $('game-profile').textContent = game.profileName;
+  if (!$('screen-life').classList.contains('hidden')) renderLife(false);
   $('btn-undo').classList.toggle('invisible', game.history.length === 0);
   const running = game.runningSince != null;
   $('game-timer').classList.toggle('paused', !running);
@@ -532,8 +559,11 @@ function renderTimer() {
     el.textContent = text;
     el.classList.toggle('long', text.length >= 6);
   }
+  const mini = $('life-timer');
+  if (mini.textContent !== text) mini.textContent = text;
+  mini.classList.toggle('paused', game.runningSince == null);
   const over = ms <= 0;
-  if (!$('screen-game').classList.contains('hidden')) {
+  if (!$('screen-game').classList.contains('hidden') || !$('screen-life').classList.contains('hidden')) {
     document.body.classList.toggle('overtime', over);
   }
   if (over && game.runningSince != null && !game.alerted) {
@@ -594,6 +624,102 @@ $('btn-next').addEventListener('click', nextPlayer);
 $('btn-undo').addEventListener('click', undo);
 armConfirm($('btn-end'), 'Tap again to end', openEndScreen);
 
+/* ---------- LIFE ---------- */
+$('btn-to-life').addEventListener('click', () => show('life'));
+$('btn-to-time').addEventListener('click', () => { show('game'); renderGame(); });
+
+function changeLife(p, delta) {
+  if (!game) return;
+  game.life[p] += delta;
+  saveGame();
+  renderLife(false);
+}
+
+/* Press = ±1, keep pressed = repeat faster. */
+function attachRepeat(btn, fn) {
+  let delay = null;
+  let interval = null;
+  const stop = () => {
+    clearTimeout(delay); clearInterval(interval);
+    delay = interval = null;
+  };
+  btn.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    stop();
+    fn();
+    delay = setTimeout(() => { interval = setInterval(fn, 90); }, 450);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => btn.addEventListener(ev, stop));
+  btn.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function toggleOut(p) {
+  if (!game) return;
+  game.out[p] = game.out[p] == null ? game.turn : null;
+  saveGame();
+  renderLife(false);
+}
+
+// rebuild = true recreates the rows (screen opened); false just updates values.
+function renderLife(rebuild) {
+  if (!game) return;
+  const list = $('life-list');
+  if (rebuild || list.children.length !== game.players.length) {
+    list.innerHTML = '';
+    game.players.forEach((name, p) => {
+      const row = document.createElement('div');
+      row.className = 'life-row';
+      const nm = document.createElement('div');
+      nm.className = 'name';
+      nm.textContent = name;
+      const minus = document.createElement('button');
+      minus.className = 'btn pm';
+      minus.textContent = '−';
+      minus.setAttribute('aria-label', `Decrease ${name}'s life`);
+      const val = document.createElement('div');
+      val.className = 'life-val';
+      const plus = document.createElement('button');
+      plus.className = 'btn pm';
+      plus.textContent = '+';
+      plus.setAttribute('aria-label', `Increase ${name}'s life`);
+      const outBtn = document.createElement('button');
+      outBtn.className = 'btn out-btn';
+      attachRepeat(minus, () => changeLife(p, -1));
+      attachRepeat(plus, () => changeLife(p, +1));
+      // Removing needs a second tap; bringing a player back is a single tap.
+      let armTimer = null;
+      outBtn.addEventListener('click', () => {
+        if (game.out[p] != null) { toggleOut(p); return; }
+        if (outBtn.classList.contains('confirm')) {
+          clearTimeout(armTimer);
+          outBtn.classList.remove('confirm');
+          toggleOut(p);
+          return;
+        }
+        outBtn.classList.add('confirm');
+        outBtn.textContent = 'Sure?';
+        armTimer = setTimeout(() => { outBtn.classList.remove('confirm'); renderLife(false); }, 3000);
+      });
+      row.append(nm, minus, val, plus, outBtn);
+      list.appendChild(row);
+    });
+  }
+  [...list.children].forEach((row, p) => {
+    const isOut = game.out[p] != null;
+    row.classList.toggle('current', p === game.player);
+    row.classList.toggle('out', isOut);
+    const val = row.querySelector('.life-val');
+    val.textContent = game.life[p];
+    val.classList.toggle('low', game.life[p] <= 0);
+    const outBtn = row.querySelector('.out-btn');
+    if (!outBtn.classList.contains('confirm')) outBtn.textContent = isOut ? 'Back' : 'Out';
+    outBtn.setAttribute('aria-label', isOut ? `Put ${game.players[p]} back in the game` : `Remove ${game.players[p]} from the turn order`);
+  });
+  $('life-turn').textContent = game.turn;
+  $('life-current').textContent = game.players[game.player];
+}
+
 /* ---------- END OF GAME ---------- */
 let pendingRecord = null;
 let chosenWinner = null;
@@ -603,7 +729,7 @@ function openEndScreen() {
   settle();
   const log = game.log.slice();
   // Include the turn in progress if any time was spent on it.
-  if (game.usedMs > 0) log.push({ turn: game.turn, player: game.player, ms: game.usedMs });
+  if (game.usedMs > 0) log.push({ turn: game.turn, player: game.player, ms: game.usedMs, life: game.life.slice() });
   pendingRecord = {
     id: game.id,
     startedAt: game.startedAt,
@@ -612,10 +738,15 @@ function openEndScreen() {
     players: game.players.slice(),
     turns: log.length ? log[log.length - 1].turn : game.turn,
     winner: null,
+    startingLife: game.startingLife,
+    finalLife: game.life.slice(),
+    out: game.out.slice(),
     log,
   };
   saveGame();
-  chosenWinner = null;
+  // Preselect the winner when exactly one player is still in the game.
+  const left = game.out.map((o, i) => (o == null ? i : -1)).filter((i) => i >= 0);
+  chosenWinner = left.length === 1 ? left[0] : null;
   renderWinnerChoices();
   $('end-summary').textContent =
     `${pendingRecord.turns} turn${pendingRecord.turns === 1 ? '' : 's'} · ` +
@@ -652,7 +783,7 @@ function finishGame(saveIt) {
 }
 
 $('end-save').addEventListener('click', () => finishGame(true));
-$('end-back').addEventListener('click', () => { pendingRecord = null; show('game'); });
+$('end-back').addEventListener('click', () => { pendingRecord = null; show('game'); renderGame(); });
 armConfirm($('end-discard'), 'Tap again to discard', () => finishGame(false));
 
 /* ---------- HISTORY ---------- */
@@ -705,6 +836,65 @@ function openDetail(id) {
   $('detail-meta').textContent =
     `${g.profileName} · ${g.turns} turns · winner: ${g.winner == null ? '—' : g.players[g.winner]}`;
 
+  renderDetailView(g);
+  show('detail');
+}
+
+let detailView = 'times';
+
+function renderDetailView(g) {
+  $('seg-times').classList.toggle('selected', detailView === 'times');
+  $('seg-life').classList.toggle('selected', detailView === 'life');
+  const box = $('detail-table');
+  box.innerHTML = '';
+  box.appendChild(detailView === 'life' ? buildLifeTable(g) : buildTimesTable(g));
+}
+
+function playerHeader(table, g, firstLabel) {
+  const thead = table.createTHead().insertRow();
+  thead.insertCell().textContent = firstLabel;
+  g.players.forEach((name, i) => {
+    const th = document.createElement('th');
+    const out = g.out && g.out[i] != null ? ` (out T${g.out[i]})` : '';
+    th.textContent = (i === g.winner ? '🏆 ' : '') + name + out;
+    thead.appendChild(th);
+  });
+}
+
+function buildLifeTable(g) {
+  const table = document.createElement('table');
+  table.className = 'times';
+  playerHeader(table, g, 'After');
+  const tbody = table.createTBody();
+  const withLife = g.log.filter((l) => Array.isArray(l.life));
+  if (!withLife.length && !g.finalLife) {
+    const r = tbody.insertRow();
+    const c = r.insertCell();
+    c.colSpan = g.players.length + 1;
+    c.textContent = 'No life data for this game.';
+    return table;
+  }
+  const addRow = (label, life) => {
+    const r = tbody.insertRow();
+    r.insertCell().textContent = label;
+    life.forEach((v) => {
+      const c = r.insertCell();
+      c.textContent = v;
+      if (v <= 0) c.className = 'out-cell';
+    });
+  };
+  if (Number.isInteger(g.startingLife)) addRow('Start', g.players.map(() => g.startingLife));
+  for (const l of withLife) addRow(`T${l.turn} · ${g.players[l.player]}`, l.life);
+  if (g.finalLife) {
+    const tfoot = table.createTFoot();
+    const r = tfoot.insertRow();
+    r.insertCell().textContent = 'End';
+    g.finalLife.forEach((v) => { r.insertCell().textContent = v; });
+  }
+  return table;
+}
+
+function buildTimesTable(g) {
   const n = g.players.length;
   const grid = {};                       // grid[turn][player] = ms
   for (const l of g.log) {
@@ -714,13 +904,7 @@ function openDetail(id) {
 
   const table = document.createElement('table');
   table.className = 'times';
-  const thead = table.createTHead().insertRow();
-  thead.insertCell().textContent = 'Turn';
-  g.players.forEach((name, i) => {
-    const th = document.createElement('th');
-    th.textContent = (i === g.winner ? '🏆 ' : '') + name;
-    thead.appendChild(th);
-  });
+  playerHeader(table, g, 'Turn');
   const tbody = table.createTBody();
   for (const t of turns) {
     const r = tbody.insertRow();
@@ -740,12 +924,12 @@ function openDetail(id) {
   addFoot('Total', sum);
   addFoot('Avg', (a) => sum(a) / a.length);
   addFoot('Max', (a) => Math.max(...a));
-
-  const box = $('detail-table');
-  box.innerHTML = '';
-  box.appendChild(table);
-  show('detail');
+  return table;
 }
+
+function currentDetail() { return store.get(KEY_HISTORY, []).find((x) => x.id === detailId); }
+$('seg-times').addEventListener('click', () => { detailView = 'times'; const g = currentDetail(); if (g) renderDetailView(g); });
+$('seg-life').addEventListener('click', () => { detailView = 'life'; const g = currentDetail(); if (g) renderDetailView(g); });
 
 $('detail-back').addEventListener('click', openHistory);
 armConfirm($('detail-delete'), 'Tap again to delete', () => {
@@ -767,7 +951,8 @@ function releaseWakeLock() {
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && !$('screen-game').classList.contains('hidden')) {
+  if (document.visibilityState === 'visible'
+      && (!$('screen-game').classList.contains('hidden') || !$('screen-life').classList.contains('hidden'))) {
     acquireWakeLock();
   }
 });
