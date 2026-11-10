@@ -468,7 +468,7 @@ function renderGame() {
   $('btn-undo').classList.toggle('invisible', game.history.length === 0);
   const running = game.runningSince != null;
   $('game-timer').classList.toggle('paused', !running);
-  $('game-hint').textContent = running ? 'Tap the timer to pause' : 'Tap the timer to start';
+  $('game-hint').textContent = (running ? 'Tap the timer to pause' : 'Tap the timer to start') + ' · hold 4 s to reset';
   renderTimer();
 }
 
@@ -499,7 +499,57 @@ function tick() {
 function startTicking() { if (rafId == null) rafId = requestAnimationFrame(tick); }
 function stopTicking() { if (rafId != null) cancelAnimationFrame(rafId); rafId = null; }
 
-$('game-timer').addEventListener('click', toggleRunning);
+/* Reset the current player's countdown to this turn's time (paused). */
+function resetTimer() {
+  if (!game) return;
+  game.remainingMs = secondsForTurn(game.entries, game.turn) * 1000;
+  game.runningSince = null;
+  game.alerted = false;
+  saveGame();
+  renderGame();
+  if (navigator.vibrate) navigator.vibrate(150);
+}
+
+/* Tap = start/pause, hold 4 s = reset. */
+const HOLD_MS = 4000;
+let holdTimer = null;
+let holdFired = false;
+let holdStartedAt = 0;
+
+function holdStart(e) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  holdFired = false;
+  holdStartedAt = Date.now();
+  clearTimeout(holdTimer);
+  const track = $('hold-bar').parentElement;
+  track.classList.remove('holding');
+  void track.offsetWidth;            // restart the CSS transition
+  track.classList.add('holding');
+  holdTimer = setTimeout(() => {
+    holdTimer = null;
+    holdFired = true;
+    track.classList.remove('holding');
+    resetTimer();
+  }, HOLD_MS);
+}
+
+function holdEnd() {
+  if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  $('hold-bar').parentElement.classList.remove('holding');
+}
+
+const timerEl = $('game-timer');
+timerEl.addEventListener('pointerdown', holdStart);
+timerEl.addEventListener('pointerup', holdEnd);
+timerEl.addEventListener('pointercancel', holdEnd);
+timerEl.addEventListener('pointerleave', holdEnd);
+timerEl.addEventListener('contextmenu', (e) => e.preventDefault());
+timerEl.addEventListener('click', () => {
+  if (holdFired) { holdFired = false; return; }   // the long press already acted
+  // A press longer than a tap that was released early is an aborted reset: do nothing.
+  if (holdStartedAt && Date.now() - holdStartedAt > 600) return;
+  toggleRunning();
+});
 $('btn-next').addEventListener('click', nextPlayer);
 $('btn-undo').addEventListener('click', undo);
 armConfirm($('btn-end'), 'Tap again to end', endGame);
