@@ -8,6 +8,8 @@ const LAST_TURN = 99999;           // open-ended last entry
 const KEY_PROFILES = 'ctt.profiles';
 const KEY_GAME = 'ctt.game';
 const KEY_SETUP = 'ctt.lastSetup';
+const KEY_HISTORY = 'ctt.history';
+const DEFAULT_HOLD_SECONDS = 4;
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 8;
 
@@ -63,6 +65,7 @@ function defaultProfile() {
   return {
     id: 'default',
     name: 'Default',
+    holdSeconds: DEFAULT_HOLD_SECONDS,
     entries: [
       { untilTurn: 4, seconds: 180 },
       { untilTurn: 5, seconds: 210 },
@@ -78,6 +81,9 @@ function loadProfiles() {
     const initial = [defaultProfile()];
     store.set(KEY_PROFILES, initial);
     return initial;
+  }
+  for (const p of list) {
+    if (!Number.isFinite(p.holdSeconds)) p.holdSeconds = DEFAULT_HOLD_SECONDS;
   }
   return list;
 }
@@ -104,7 +110,7 @@ function profileSummary(entries) {
 
 /* ---------- DOM ---------- */
 const $ = (id) => document.getElementById(id);
-const screens = ['menu', 'setup', 'profiles', 'editor', 'game'];
+const screens = ['menu', 'setup', 'profiles', 'editor', 'game', 'end', 'history', 'detail'];
 
 function show(name) {
   for (const s of screens) $('screen-' + s).classList.toggle('hidden', s !== name);
@@ -124,6 +130,7 @@ function renderMenu() {
 }
 $('btn-new-game').addEventListener('click', openSetup);
 $('btn-profiles').addEventListener('click', openProfiles);
+$('btn-history').addEventListener('click', openHistory);
 $('btn-resume').addEventListener('click', () => {
   if (loadGame()) show('game');
 });
@@ -196,7 +203,7 @@ function openProfiles() {
     t.textContent = p.name;
     const s = document.createElement('div');
     s.className = 'muted small';
-    s.textContent = profileSummary(p.entries);
+    s.textContent = profileSummary(p.entries) + ` · hold ${p.holdSeconds} s to reset`;
     li.append(t, s);
     li.addEventListener('click', () => openEditor(p.id));
     list.appendChild(li);
@@ -213,8 +220,9 @@ function openEditor(id) {
   const profiles = loadProfiles();
   const p = id ? profiles.find((x) => x.id === id) : null;
   editingId = p ? p.id : null;
-  const base = p || { name: 'New profile', entries: defaultProfile().entries };
+  const base = p || { name: 'New profile', holdSeconds: DEFAULT_HOLD_SECONDS, entries: defaultProfile().entries };
   $('editor-name').value = base.name;
+  $('editor-hold').value = base.holdSeconds;
   $('editor-rows').innerHTML = '';
   for (const e of base.entries) addEditorRow(e.untilTurn, e.seconds);
   refreshEditorRows();
@@ -304,7 +312,11 @@ function readEditor() {
     entries.push({ untilTurn, seconds });
     prev = untilTurn;
   }
-  return { name, entries };
+  const holdSeconds = Number($('editor-hold').value);
+  if (!Number.isInteger(holdSeconds) || holdSeconds < 1 || holdSeconds > 30) {
+    return { error: 'Hold to reset: enter whole seconds between 1 and 30.' };
+  }
+  return { name, entries, holdSeconds };
 }
 
 $('editor-save').addEventListener('click', () => {
@@ -319,8 +331,9 @@ $('editor-save').addEventListener('click', () => {
     const p = profiles.find((x) => x.id === editingId);
     p.name = res.name;
     p.entries = res.entries;
+    p.holdSeconds = res.holdSeconds;
   } else {
-    profiles.push({ id: uid(), name: res.name, entries: res.entries });
+    profiles.push({ id: uid(), name: res.name, holdSeconds: res.holdSeconds, entries: res.entries });
   }
   saveProfiles(profiles);
   openProfiles();
@@ -356,14 +369,18 @@ function armConfirm(btn, confirmText, action) {
   });
 }
 
+
 /* ---------- GAME ---------- */
 /*
  * game = {
- *   players: [names], profileName, entries: [...],   (profile snapshot)
- *   turn, player,                                    (1-based turn, 0-based player)
- *   remainingMs, runningSince (epoch ms | null),
- *   alerted (vibration done for this countdown),
- *   history: [{ turn, player, remainingMs, alerted }]
+ *   id, startedAt,
+ *   players: [names], profileName, entries: [...], holdSeconds,   (profile snapshot)
+ *   turn, player,                     (1-based turn, 0-based player)
+ *   remainingMs, runningSince,        (countdown; runningSince = epoch ms | null)
+ *   usedMs,                           (real running time of the current player's turn, pauses excluded)
+ *   alerted,                          (vibration done for this countdown)
+ *   log: [{ turn, player, ms }],      (completed player-turns)
+ *   history: [{ turn, player, remainingMs, usedMs, alerted }]   (undo stack)
  * }
  */
 let game = null;
@@ -371,11 +388,22 @@ let rafId = null;
 
 function now() { return Date.now(); }
 
+function elapsedSinceStart() {
+  return game.runningSince == null ? 0 : now() - game.runningSince;
+}
 function currentRemaining() {
-  if (!game) return 0;
-  return game.runningSince == null
-    ? game.remainingMs
-    : game.remainingMs - (now() - game.runningSince);
+  return game ? game.remainingMs - elapsedSinceStart() : 0;
+}
+function currentUsed() {
+  return game ? game.usedMs + elapsedSinceStart() : 0;
+}
+
+// Fold the running segment into remainingMs/usedMs and pause.
+function settle() {
+  const e = elapsedSinceStart();
+  game.remainingMs -= e;
+  game.usedMs += e;
+  game.runningSince = null;
 }
 
 function saveGame() { if (game) store.set(KEY_GAME, game); }
@@ -383,6 +411,13 @@ function saveGame() { if (game) store.set(KEY_GAME, game); }
 function loadGame() {
   const g = store.get(KEY_GAME, null);
   if (!g || !Array.isArray(g.players) || !Array.isArray(g.entries)) return false;
+  // Fill fields missing from games saved by older versions.
+  g.id = g.id || uid();
+  g.startedAt = g.startedAt || now();
+  g.holdSeconds = Number.isFinite(g.holdSeconds) ? g.holdSeconds : DEFAULT_HOLD_SECONDS;
+  g.usedMs = g.usedMs || 0;
+  g.log = Array.isArray(g.log) ? g.log : [];
+  g.history = (g.history || []).map((h) => ({ usedMs: 0, ...h }));
   game = g;
   renderGame();
   startTicking();
@@ -391,14 +426,19 @@ function loadGame() {
 
 function startGame(names, profile) {
   game = {
+    id: uid(),
+    startedAt: now(),
     players: names,
     profileName: profile.name,
     entries: profile.entries.map((e) => ({ ...e })),
+    holdSeconds: profile.holdSeconds || DEFAULT_HOLD_SECONDS,
     turn: 1,
     player: 0,
     remainingMs: secondsForTurn(profile.entries, 1) * 1000,
     runningSince: null,
+    usedMs: 0,
     alerted: false,
+    log: [],
     history: [],
   };
   saveGame();
@@ -412,8 +452,7 @@ function toggleRunning() {
   if (game.runningSince == null) {
     game.runningSince = now();
   } else {
-    game.remainingMs = currentRemaining();
-    game.runningSince = null;
+    settle();
   }
   saveGame();
   renderGame();
@@ -421,13 +460,15 @@ function toggleRunning() {
 
 function nextPlayer() {
   if (!game) return;
+  settle();
+  game.log.push({ turn: game.turn, player: game.player, ms: game.usedMs });
   game.history.push({
     turn: game.turn,
     player: game.player,
-    remainingMs: currentRemaining(),
+    remainingMs: game.remainingMs,
+    usedMs: game.usedMs,
     alerted: game.alerted,
   });
-  if (game.history.length > 500) game.history.shift();
 
   game.player += 1;
   if (game.player >= game.players.length) {
@@ -435,6 +476,7 @@ function nextPlayer() {
     game.turn += 1;
   }
   game.remainingMs = secondsForTurn(game.entries, game.turn) * 1000;
+  game.usedMs = 0;
   game.runningSince = now();
   game.alerted = false;
   saveGame();
@@ -444,20 +486,27 @@ function nextPlayer() {
 function undo() {
   if (!game || game.history.length === 0) return;
   const prev = game.history.pop();
+  game.log.pop();
   game.turn = prev.turn;
   game.player = prev.player;
   game.remainingMs = prev.remainingMs;
+  game.usedMs = prev.usedMs;
   game.runningSince = null;          // restored paused
   game.alerted = prev.alerted || prev.remainingMs <= 0;
   saveGame();
   renderGame();
 }
 
-function endGame() {
-  game = null;
-  stopTicking();
-  store.remove(KEY_GAME);
-  show('menu');
+/* Reset the current player's countdown to this turn's time (paused).
+ * Time already spent in this turn stays counted in usedMs. */
+function resetTimer() {
+  if (!game) return;
+  settle();
+  game.remainingMs = secondsForTurn(game.entries, game.turn) * 1000;
+  game.alerted = false;
+  saveGame();
+  renderGame();
+  if (navigator.vibrate) navigator.vibrate(150);
 }
 
 function renderGame() {
@@ -468,7 +517,9 @@ function renderGame() {
   $('btn-undo').classList.toggle('invisible', game.history.length === 0);
   const running = game.runningSince != null;
   $('game-timer').classList.toggle('paused', !running);
-  $('game-hint').textContent = (running ? 'Tap the timer to pause' : 'Tap the timer to start') + ' · hold 4 s to reset';
+  $('game-hint').textContent = (running ? 'Tap the timer to pause' : 'Tap the timer to start')
+    + ` · hold ${game.holdSeconds} s to reset`;
+  $('hold-bar').style.transitionDuration = game.holdSeconds + 's';
   renderTimer();
 }
 
@@ -499,27 +550,15 @@ function tick() {
 function startTicking() { if (rafId == null) rafId = requestAnimationFrame(tick); }
 function stopTicking() { if (rafId != null) cancelAnimationFrame(rafId); rafId = null; }
 
-/* Reset the current player's countdown to this turn's time (paused). */
-function resetTimer() {
-  if (!game) return;
-  game.remainingMs = secondsForTurn(game.entries, game.turn) * 1000;
-  game.runningSince = null;
-  game.alerted = false;
-  saveGame();
-  renderGame();
-  if (navigator.vibrate) navigator.vibrate(150);
-}
-
-/* Tap = start/pause, hold 4 s = reset. */
-const HOLD_MS = 4000;
+/* Tap = start/pause, hold N s (profile setting) = reset. */
 let holdTimer = null;
 let holdFired = false;
 let holdStartedAt = 0;
 
 function holdStart(e) {
-  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (!game || (e.pointerType === 'mouse' && e.button !== 0)) return;
   holdFired = false;
-  holdStartedAt = Date.now();
+  holdStartedAt = now();
   clearTimeout(holdTimer);
   const track = $('hold-bar').parentElement;
   track.classList.remove('holding');
@@ -530,7 +569,7 @@ function holdStart(e) {
     holdFired = true;
     track.classList.remove('holding');
     resetTimer();
-  }, HOLD_MS);
+  }, game.holdSeconds * 1000);
 }
 
 function holdEnd() {
@@ -547,12 +586,172 @@ timerEl.addEventListener('contextmenu', (e) => e.preventDefault());
 timerEl.addEventListener('click', () => {
   if (holdFired) { holdFired = false; return; }   // the long press already acted
   // A press longer than a tap that was released early is an aborted reset: do nothing.
-  if (holdStartedAt && Date.now() - holdStartedAt > 600) return;
+  if (holdStartedAt && now() - holdStartedAt > 600) return;
   toggleRunning();
 });
+
 $('btn-next').addEventListener('click', nextPlayer);
 $('btn-undo').addEventListener('click', undo);
-armConfirm($('btn-end'), 'Tap again to end', endGame);
+armConfirm($('btn-end'), 'Tap again to end', openEndScreen);
+
+/* ---------- END OF GAME ---------- */
+let pendingRecord = null;
+let chosenWinner = null;
+
+function openEndScreen() {
+  if (!game) return;
+  settle();
+  const log = game.log.slice();
+  // Include the turn in progress if any time was spent on it.
+  if (game.usedMs > 0) log.push({ turn: game.turn, player: game.player, ms: game.usedMs });
+  pendingRecord = {
+    id: game.id,
+    startedAt: game.startedAt,
+    endedAt: now(),
+    profileName: game.profileName,
+    players: game.players.slice(),
+    turns: log.length ? log[log.length - 1].turn : game.turn,
+    winner: null,
+    log,
+  };
+  saveGame();
+  chosenWinner = null;
+  renderWinnerChoices();
+  $('end-summary').textContent =
+    `${pendingRecord.turns} turn${pendingRecord.turns === 1 ? '' : 's'} · ` +
+    `${formatDuration(sum(log.map((l) => l.ms)))} of turn time`;
+  show('end');
+}
+
+function renderWinnerChoices() {
+  const box = $('winner-list');
+  box.innerHTML = '';
+  const options = [{ idx: null, label: 'No winner / skip' }]
+    .concat(pendingRecord.players.map((name, idx) => ({ idx, label: name })));
+  for (const o of options) {
+    const b = document.createElement('button');
+    b.className = 'btn choice' + (chosenWinner === o.idx ? ' selected' : '');
+    b.textContent = (chosenWinner === o.idx ? '✓ ' : '') + o.label;
+    b.addEventListener('click', () => { chosenWinner = o.idx; renderWinnerChoices(); });
+    box.appendChild(b);
+  }
+}
+
+function finishGame(saveIt) {
+  if (saveIt && pendingRecord) {
+    pendingRecord.winner = chosenWinner;
+    const hist = store.get(KEY_HISTORY, []);
+    hist.unshift(pendingRecord);
+    store.set(KEY_HISTORY, hist);
+  }
+  pendingRecord = null;
+  game = null;
+  stopTicking();
+  store.remove(KEY_GAME);
+  if (saveIt) openHistory(); else show('menu');
+}
+
+$('end-save').addEventListener('click', () => finishGame(true));
+$('end-back').addEventListener('click', () => { pendingRecord = null; show('game'); });
+armConfirm($('end-discard'), 'Tap again to discard', () => finishGame(false));
+
+/* ---------- HISTORY ---------- */
+function sum(arr) { return arr.reduce((a, b) => a + b, 0); }
+
+function formatDuration(ms) {
+  const totalSec = Math.round(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatDate(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })
+    + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+function openHistory() {
+  const hist = store.get(KEY_HISTORY, []);
+  const list = $('history-list');
+  list.innerHTML = '';
+  $('history-empty').classList.toggle('hidden', hist.length > 0);
+  for (const g of hist) {
+    const li = document.createElement('li');
+    const t = document.createElement('div');
+    t.className = 'title';
+    t.textContent = formatDate(g.startedAt);
+    const s1 = document.createElement('div');
+    s1.className = 'small';
+    s1.textContent = g.players.map((n, i) => (i === g.winner ? '🏆 ' + n : n)).join(', ');
+    const s2 = document.createElement('div');
+    s2.className = 'muted small';
+    s2.textContent = `${g.turns} turns · ${formatDuration(sum(g.log.map((l) => l.ms)))} · ${g.profileName}`;
+    li.append(t, s1, s2);
+    li.addEventListener('click', () => openDetail(g.id));
+    list.appendChild(li);
+  }
+  show('history');
+}
+
+let detailId = null;
+
+function openDetail(id) {
+  const g = store.get(KEY_HISTORY, []).find((x) => x.id === id);
+  if (!g) return openHistory();
+  detailId = id;
+  $('detail-title').textContent = formatDate(g.startedAt);
+  $('detail-meta').textContent =
+    `${g.profileName} · ${g.turns} turns · winner: ${g.winner == null ? '—' : g.players[g.winner]}`;
+
+  const n = g.players.length;
+  const grid = {};                       // grid[turn][player] = ms
+  for (const l of g.log) {
+    (grid[l.turn] = grid[l.turn] || {})[l.player] = (grid[l.turn][l.player] || 0) + l.ms;
+  }
+  const turns = Object.keys(grid).map(Number).sort((a, b) => a - b);
+
+  const table = document.createElement('table');
+  table.className = 'times';
+  const thead = table.createTHead().insertRow();
+  thead.insertCell().textContent = 'Turn';
+  g.players.forEach((name, i) => {
+    const th = document.createElement('th');
+    th.textContent = (i === g.winner ? '🏆 ' : '') + name;
+    thead.appendChild(th);
+  });
+  const tbody = table.createTBody();
+  for (const t of turns) {
+    const r = tbody.insertRow();
+    r.insertCell().textContent = t;
+    for (let p = 0; p < n; p++) {
+      const ms = grid[t][p];
+      r.insertCell().textContent = ms == null ? '—' : formatDuration(ms);
+    }
+  }
+  const tfoot = table.createTFoot();
+  const per = g.players.map((_, p) => g.log.filter((l) => l.player === p).map((l) => l.ms));
+  const addFoot = (label, fn) => {
+    const r = tfoot.insertRow();
+    r.insertCell().textContent = label;
+    per.forEach((arr) => { r.insertCell().textContent = arr.length ? formatDuration(fn(arr)) : '—'; });
+  };
+  addFoot('Total', sum);
+  addFoot('Avg', (a) => sum(a) / a.length);
+  addFoot('Max', (a) => Math.max(...a));
+
+  const box = $('detail-table');
+  box.innerHTML = '';
+  box.appendChild(table);
+  show('detail');
+}
+
+$('detail-back').addEventListener('click', openHistory);
+armConfirm($('detail-delete'), 'Tap again to delete', () => {
+  store.set(KEY_HISTORY, store.get(KEY_HISTORY, []).filter((x) => x.id !== detailId));
+  openHistory();
+});
 
 /* ---------- screen wake lock ---------- */
 let wakeLock = null;

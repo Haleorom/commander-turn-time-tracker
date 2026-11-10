@@ -21,6 +21,7 @@
       <button id="btn-resume" class="btn btn-primary btn-big hidden">Resume game</button>
       <button id="btn-new-game" class="btn btn-primary btn-big">New game</button>
       <button id="btn-profiles" class="btn btn-big">Time profiles</button>
+      <button id="btn-history" class="btn btn-big">Games history</button>
     </div>
   </section>
 
@@ -76,6 +77,10 @@
         <span>Name</span>
         <input id="editor-name" type="text" maxlength="40" autocomplete="off">
       </label>
+      <label class="field">
+        <span>Hold timer to reset (seconds)</span>
+        <input id="editor-hold" type="number" inputmode="numeric" min="1" max="30" class="narrow">
+      </label>
       <p class="muted small">Each row sets the countdown for every turn up to and including “Until turn”. The last row covers the rest of the game.</p>
       <div class="rows-head"><span>Until turn</span><span>Time (m:ss)</span><span></span></div>
       <div id="editor-rows"></div>
@@ -104,6 +109,50 @@
     <footer class="bar bar-bottom two game-actions">
       <button id="btn-undo" class="btn btn-big">↶ Undo</button>
       <button id="btn-next" class="btn btn-primary btn-big">Next player ›</button>
+    </footer>
+  </section>
+
+  <!-- END OF GAME -->
+  <section id="screen-end" class="screen hidden">
+    <header class="bar">
+      <button id="end-back" class="btn btn-ghost">‹ Back to game</button>
+      <h1>Game over</h1>
+    </header>
+    <div class="content">
+      <p id="end-summary" class="muted"></p>
+      <h2 class="h2">Who won? <span class="muted small">(optional)</span></h2>
+      <div id="winner-list" class="choices"></div>
+    </div>
+    <footer class="bar bar-bottom two">
+      <button id="end-discard" class="btn btn-danger">Discard</button>
+      <button id="end-save" class="btn btn-primary">Save game</button>
+    </footer>
+  </section>
+
+  <!-- HISTORY LIST -->
+  <section id="screen-history" class="screen hidden">
+    <header class="bar">
+      <button class="btn btn-ghost" data-back="menu">‹ Back</button>
+      <h1>Games history</h1>
+    </header>
+    <div class="content">
+      <p id="history-empty" class="muted">No games saved yet.</p>
+      <ul id="history-list" class="list"></ul>
+    </div>
+  </section>
+
+  <!-- HISTORY DETAIL -->
+  <section id="screen-detail" class="screen hidden">
+    <header class="bar">
+      <button id="detail-back" class="btn btn-ghost">‹ Back</button>
+      <h1 id="detail-title">Game</h1>
+    </header>
+    <div class="content">
+      <p id="detail-meta" class="muted small"></p>
+      <div id="detail-table" class="table-wrap"></div>
+    </div>
+    <footer class="bar bar-bottom">
+      <button id="detail-delete" class="btn btn-danger btn-wide">Delete this game</button>
     </footer>
   </section>
 

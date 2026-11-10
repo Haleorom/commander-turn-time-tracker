@@ -201,3 +201,36 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0;
 
 .game-actions .btn { min-height: 72px; }
 #btn-undo.invisible { visibility: hidden; }
+
+.field input.narrow { flex: 0 0 90px; max-width: 90px; text-align: center; }
+.h2 { font-size: 1.05rem; font-weight: 600; margin: 20px 0 10px; }
+
+/* End-of-game winner choice */
+.choices { display: flex; flex-direction: column; gap: 8px; }
+.choice { text-align: left; background: var(--panel); border: 1px solid transparent; }
+.choice.selected { border-color: var(--accent); background: #1d2a44; }
+
+/* History detail table */
+.table-wrap { overflow-x: auto; margin: 0 -16px; padding: 0 16px; }
+table.times {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  font-size: .9rem;
+  min-width: 100%;
+}
+table.times th, table.times td {
+  padding: 8px 10px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid #2a2f38;
+}
+table.times thead td, table.times th {
+  color: var(--muted);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+table.times td:first-child, table.times thead td:first-child { text-align: left; color: var(--muted); }
+table.times tfoot td { font-weight: 600; border-bottom: 0; }
+table.times tfoot tr:first-child td { border-top: 2px solid #343a44; }
