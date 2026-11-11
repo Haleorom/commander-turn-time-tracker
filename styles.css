@@ -319,3 +319,31 @@ table.times td.out-cell { color: #ff8a80; }
 
 input.invalid { outline: 2px solid #ff8a80; }
 .game-actions .btn { padding-left: 8px; padding-right: 8px; white-space: nowrap; font-size: 1.05rem; }
+
+/* Read-only life totals on the timer screen */
+.life-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px 4px;
+  pointer-events: none;
+}
+.life-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 48%;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1.5px solid transparent;
+  font-size: .9rem;
+}
+.life-chip .chip-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.life-chip .chip-val { font-weight: 700; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.life-chip.current { border-color: var(--accent); }
+.life-chip.current .chip-name { color: var(--text); }
+.life-chip.low .chip-val { color: #ff8a80; }
+.life-chip.out { opacity: .4; }
+.life-chip.out .chip-val { text-decoration: line-through; }

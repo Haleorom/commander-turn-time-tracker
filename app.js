@@ -541,6 +541,7 @@ function renderGame() {
   $('game-player').textContent = game.players[game.player];
   $('game-profile').textContent = game.profileName;
   if (!$('screen-life').classList.contains('hidden')) renderLife(false);
+  renderLifeStrip();
   $('btn-undo').classList.toggle('invisible', game.history.length === 0);
   const running = game.runningSince != null;
   $('game-timer').classList.toggle('paused', !running);
@@ -718,6 +719,31 @@ function renderLife(rebuild) {
   });
   $('life-turn').textContent = game.turn;
   $('life-current').textContent = game.players[game.player];
+}
+
+/* Read-only life totals on the timer screen. */
+function renderLifeStrip() {
+  const strip = $('life-strip');
+  if (strip.children.length !== game.players.length) {
+    strip.innerHTML = '';
+    game.players.forEach(() => {
+      const chip = document.createElement('div');
+      chip.className = 'life-chip';
+      const nm = document.createElement('span');
+      nm.className = 'chip-name';
+      const val = document.createElement('span');
+      val.className = 'chip-val';
+      chip.append(nm, val);
+      strip.appendChild(chip);
+    });
+  }
+  [...strip.children].forEach((chip, p) => {
+    chip.classList.toggle('current', p === game.player);
+    chip.classList.toggle('out', game.out[p] != null);
+    chip.classList.toggle('low', game.life[p] <= 0);
+    chip.querySelector('.chip-name').textContent = game.players[p];
+    chip.querySelector('.chip-val').textContent = game.life[p];
+  });
 }
 
 /* ---------- END OF GAME ---------- */
