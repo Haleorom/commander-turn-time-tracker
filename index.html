@@ -125,6 +125,7 @@
     <button id="btn-to-time" class="side-btn" aria-label="Time"><svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 2h12M6 22h12M7 2v4.5a5 5 0 0 0 2.2 4.1L12 12l2.8 1.4A5 5 0 0 1 17 17.5V22M17 2v4.5a5 5 0 0 1-2.2 4.1L12 12l-2.8 1.4A5 5 0 0 0 7 17.5V22"/></svg></button>
     <div class="side-main">
       <header class="life-head">
+        <button id="btn-layout" class="btn btn-small layout-btn" aria-label="Arrange the life bars">✥ Layout</button>
         <div class="small muted">Turn <strong id="life-turn">1</strong> · <span id="life-current"></span></div>
         <div id="life-timer" class="mini-timer">3:00</div>
       </header>
@@ -183,10 +184,20 @@
   <!-- FREE-POSITIONED LIFE BARS (shared by timer and life screens) -->
   <div id="bars-layer" class="bars-layer hidden"></div>
   <div id="edit-bar" class="edit-toolbar hidden">
-    <span class="small muted">Drag the bars · ⟳ rotates</span>
+    <span class="small muted">Drag a bar to move it · drag ⟳ to rotate (tap = 90°)</span>
     <div class="edit-buttons">
       <button id="edit-reset" class="btn btn-danger">Reset layout</button>
       <button id="edit-done" class="btn btn-primary">Done</button>
+    </div>
+  </div>
+
+  <!-- PLAYER MENU (tap a player's icon on a life bar) -->
+  <div id="player-menu" class="sheet-backdrop center hidden">
+    <div class="sheet dialog" role="dialog" aria-label="Player options">
+      <div id="pmenu-head" class="sheet-head"></div>
+      <div id="pmenu-status" class="muted small"></div>
+      <button id="pmenu-out" class="btn btn-wide"></button>
+      <button id="pmenu-cancel" class="btn btn-wide">Cancel</button>
     </div>
   </div>
 

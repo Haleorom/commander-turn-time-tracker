@@ -797,9 +797,9 @@ armConfirm($('btn-end'), 'Tap again to end', openEndScreen);
 $('btn-to-life').addEventListener('click', () => show('life'));
 $('btn-to-time').addEventListener('click', () => { show('game'); renderGame(); });
 
-const KEY_LAYOUT = 'ctt.layout';   // { [playerCount]: [{ x, y, rot }] }, x/y = bar centre as a fraction of the viewport
+const KEY_LAYOUT = 'ctt.layout';   // { [playerCount]: [{ x, y, rot }] }, x/y = bar centre as a fraction of the viewport, rot in degrees
 const SIDE_STRIP = 56;             // keep free bars off the ⏳ / ❤ side strips
-const PAIR_HOLD_MS = 500;          // hold + and − together this long to enter repositioning mode
+const ROT_SNAP = 6;                // degrees: free rotation snaps to 0/90/180/270 when this close
 let editMode = false;
 let topZ = 1;                      // bar being moved/rotated comes to the front
 
@@ -817,19 +817,10 @@ function toggleOut(p) {
   refreshLife();
 }
 
-/* +/− buttons: press = ±1, keep pressed = repeat faster.
- * Pressing + and − of the same player together (on the life screen) enters repositioning mode. */
-const pmState = {};   // per player: { pointers, startLife, pairTimer, stops: Set }
-
-function pmFor(p) {
-  if (!pmState[p]) pmState[p] = { pointers: 0, startLife: 0, pairTimer: null, stops: new Set() };
-  return pmState[p];
-}
-
+/* +/− buttons: press = ±1, keep pressed = repeat faster. */
 function attachPm(btn, p, delta) {
   let delay = null;
   let interval = null;
-  let down = false;
   const stop = () => {
     clearTimeout(delay); clearInterval(interval);
     delay = interval = null;
@@ -837,43 +828,16 @@ function attachPm(btn, p, delta) {
   btn.addEventListener('pointerdown', (e) => {
     if (editMode || (e.pointerType === 'mouse' && e.button !== 0)) return;
     e.preventDefault();
-    const st = pmFor(p);
-    if (st.pointers === 0) st.startLife = game.life[p];
-    st.pointers += 1;
-    down = true;
-    st.stops.add(stop);
-    if (st.pointers >= 2) {
-      st.stops.forEach((f) => f());     // both pressed: stop changing life and undo the first press
-      if (game.life[p] !== st.startLife) { game.life[p] = st.startLife; saveGame(); refreshLife(); }
-      if (pairAllowed()) {
-        clearTimeout(st.pairTimer);
-        st.pairTimer = setTimeout(() => enterEditMode(p), PAIR_HOLD_MS);
-      }
-      return;
-    }
     stop();
     changeLife(p, delta);
     delay = setTimeout(() => { interval = setInterval(() => changeLife(p, delta), 90); }, 450);
   });
-  const release = () => {
-    stop();
-    if (!down) return;
-    down = false;
-    const st = pmFor(p);
-    st.pointers = Math.max(0, st.pointers - 1);
-    st.stops.delete(stop);
-    clearTimeout(st.pairTimer);
-    st.pairTimer = null;
-  };
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => btn.addEventListener(ev, release));
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => btn.addEventListener(ev, stop));
   btn.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
-function pairAllowed() {
-  return !$('screen-life').classList.contains('hidden');
-}
-
-/* One player's life row (used by the list and by the free bars). */
+/* One player's life row (used by the list and by the free bars).
+ * Tapping the player's icon/name opens a small menu (remove from / put back in the turn order). */
 function createLifeRow(p) {
   const name = game.players[p];
   const row = document.createElement('div');
@@ -881,9 +845,11 @@ function createLifeRow(p) {
   row.dataset.p = p;
   const look = lookOf(game, p);
   row.style.setProperty('--pc', look.color);
-  const nm = document.createElement('div');
+  const nm = document.createElement('button');
   nm.className = 'name';
+  nm.setAttribute('aria-label', `${name}: player options`);
   nm.append(makeBadge(look.color, look.icon, 'sm'), Object.assign(document.createElement('span'), { textContent: name }));
+  nm.addEventListener('click', () => { if (!editMode) openPlayerMenu(p); });
   const minus = document.createElement('button');
   minus.className = 'btn pm minus';
   minus.textContent = '−';
@@ -894,40 +860,48 @@ function createLifeRow(p) {
   plus.className = 'btn pm plus';
   plus.textContent = '+';
   plus.setAttribute('aria-label', `Increase ${name}'s life`);
-  const outBtn = document.createElement('button');
-  outBtn.className = 'btn out-btn';
   attachPm(minus, p, -1);
   attachPm(plus, p, +1);
-  // Removing needs a second tap; bringing a player back is a single tap.
-  let armTimer = null;
-  outBtn.addEventListener('click', () => {
-    if (editMode) return;
-    if (game.out[p] != null) { toggleOut(p); return; }
-    if (outBtn.classList.contains('confirm')) {
-      clearTimeout(armTimer);
-      outBtn.classList.remove('confirm');
-      toggleOut(p);
-      return;
-    }
-    outBtn.classList.add('confirm');
-    outBtn.textContent = 'Sure?';
-    armTimer = setTimeout(() => { outBtn.classList.remove('confirm'); refreshLife(); }, 3000);
-  });
-  row.append(nm, minus, val, plus, outBtn);
+  row.append(nm, minus, val, plus);
   return row;
 }
 
 function updateLifeRow(row, p) {
-  const isOut = game.out[p] != null;
   row.classList.toggle('current', p === game.player);
-  row.classList.toggle('out', isOut);
+  row.classList.toggle('out', game.out[p] != null);
   const val = row.querySelector('.life-val');
   val.textContent = game.life[p];
   val.classList.toggle('low', game.life[p] <= 0);
-  const outBtn = row.querySelector('.out-btn');
-  if (!outBtn.classList.contains('confirm')) outBtn.textContent = isOut ? 'Back' : 'Out';
-  outBtn.setAttribute('aria-label', isOut ? `Put ${game.players[p]} back in the game` : `Remove ${game.players[p]} from the turn order`);
 }
+
+/* Player menu popup */
+let menuPlayer = null;
+
+function openPlayerMenu(p) {
+  menuPlayer = p;
+  const look = lookOf(game, p);
+  const head = $('pmenu-head');
+  head.innerHTML = '';
+  head.append(makeBadge(look.color, look.icon, 'lg'), Object.assign(document.createElement('strong'), { textContent: game.players[p] }));
+  const isOut = game.out[p] != null;
+  $('pmenu-status').textContent = isOut ? `Out since turn ${game.out[p]}` : `Life ${game.life[p]}`;
+  const btn = $('pmenu-out');
+  btn.textContent = isOut ? 'Put back in the game' : 'Remove from turn order (lost)';
+  btn.className = 'btn btn-wide ' + (isOut ? 'btn-primary' : 'btn-danger-solid');
+  $('player-menu').classList.remove('hidden');
+}
+
+function closePlayerMenu() {
+  $('player-menu').classList.add('hidden');
+  menuPlayer = null;
+}
+
+$('pmenu-out').addEventListener('click', () => {
+  if (menuPlayer != null) toggleOut(menuPlayer);
+  closePlayerMenu();
+});
+$('pmenu-cancel').addEventListener('click', closePlayerMenu);
+$('player-menu').addEventListener('click', (e) => { if (e.target.id === 'player-menu') closePlayerMenu(); });
 
 function refreshLife() {
   renderLife(false);
@@ -947,6 +921,7 @@ function renderLife(rebuild) {
   const cl = lookOf(game, game.player);
   $('life-current').textContent = `${cl.icon} ${game.players[game.player]}`;
   $('life-current').style.color = cl.color;
+  $('btn-layout').classList.toggle('hidden', editMode);
   renderBars(rebuild);
 }
 
@@ -1001,18 +976,24 @@ function visibleGameScreen() {
   return null;
 }
 
-// Keep a bar (centre cx, cy) fully on screen and off the side strips.
+// Keep a bar (centre cx, cy, any rotation) fully on screen and off the side strips.
 function clampCenter(bar, rot, cx, cy) {
   const W = window.innerWidth;
   const H = window.innerHeight;
-  const sideways = rot === 90 || rot === 270;
-  const hw = (sideways ? bar.offsetHeight : bar.offsetWidth) / 2;
-  const hh = (sideways ? bar.offsetWidth : bar.offsetHeight) / 2;
+  const rad = (rot * Math.PI) / 180;
+  const c = Math.abs(Math.cos(rad));
+  const s = Math.abs(Math.sin(rad));
+  const w = bar.offsetWidth;
+  const h = bar.offsetHeight;
+  const hw = (w * c + h * s) / 2;
+  const hh = (w * s + h * c) / 2;
   const minX = SIDE_STRIP + hw;
   const maxX = W - SIDE_STRIP - hw;
+  const minY = hh;
+  const maxY = H - hh;
   return {
     x: minX > maxX ? W / 2 : Math.min(maxX, Math.max(minX, cx)),
-    y: Math.min(H - hh, Math.max(hh, cy)),
+    y: minY > maxY ? H / 2 : Math.min(maxY, Math.max(minY, cy)),
   };
 }
 
@@ -1042,9 +1023,8 @@ function renderBars(rebuild) {
       const rot = document.createElement('button');
       rot.className = 'rot-btn';
       rot.textContent = '⟳';
-      rot.setAttribute('aria-label', 'Rotate');
-      rot.addEventListener('click', (e) => { e.stopPropagation(); bar.style.zIndex = ++topZ; rotateBar(p); });
-      rot.addEventListener('pointerdown', (e) => { e.stopPropagation(); bar.style.zIndex = ++topZ; });
+      rot.setAttribute('aria-label', 'Drag to rotate, tap for 90°');
+      rot.addEventListener('pointerdown', (e) => startRotate(e, bar, p));
       bar.appendChild(rot);
       bar.addEventListener('pointerdown', (e) => startBarDrag(e, bar, p));
       layer.appendChild(bar);
@@ -1058,12 +1038,8 @@ function renderBars(rebuild) {
   });
 }
 
-function enterEditMode(p) {
+function enterEditMode() {
   if (!game) return;
-  const st = pmFor(p);
-  game.life[p] = st.startLife;       // undo whatever the two presses changed
-  saveGame();
-  Object.keys(pmState).forEach((k) => delete pmState[k]);
   if (!getLayout()) {
     // Start from where the rows are in the list right now.
     const W = window.innerWidth;
@@ -1074,7 +1050,6 @@ function enterEditMode(p) {
     }));
   }
   editMode = true;
-  if (navigator.vibrate) navigator.vibrate(60);
   renderLife(true);
 }
 
@@ -1083,12 +1058,55 @@ function exitEditMode() {
   renderLife(true);
 }
 
-function rotateBar(p) {
+function normalizeAngle(a) {
+  return ((a % 360) + 360) % 360;
+}
+
+function snapAngle(a) {
+  const n = normalizeAngle(a);
+  const nearest = Math.round(n / 90) * 90;
+  return Math.abs(n - nearest) <= ROT_SNAP ? nearest % 360 : n;
+}
+
+/* Rotation handle: drag around the bar to rotate freely (snaps near 0/90/180/270), tap = +90°. */
+function startRotate(e, bar, p) {
+  if (!editMode || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  e.preventDefault();
+  e.stopPropagation();
   const layout = getLayout();
-  if (!layout) return;
-  layout[p].rot = (layout[p].rot + 90) % 360;
-  setLayout(layout);
-  renderBars(false);
+  const pos = layout[p];
+  const handle = e.currentTarget;
+  bar.style.zIndex = ++topZ;
+  const box = bar.getBoundingClientRect();
+  const cx = box.left + box.width / 2;
+  const cy = box.top + box.height / 2;
+  const startAngle = Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI;
+  const startRot = pos.rot;
+  const sx = e.clientX;
+  const sy = e.clientY;
+  let moved = false;
+  handle.setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+    moved = true;
+    const a = Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180 / Math.PI;
+    pos.rot = snapAngle(startRot + a - startAngle);
+    placeBar(bar, pos);
+  };
+  const up = () => {
+    handle.removeEventListener('pointermove', move);
+    handle.removeEventListener('pointerup', up);
+    handle.removeEventListener('pointercancel', up);
+    if (!moved) {
+      pos.rot = normalizeAngle(Math.round((pos.rot + 90) / 90) * 90);   // tap: next quarter turn
+      placeBar(bar, pos);
+    }
+    pos.rot = Math.round(pos.rot * 10) / 10;
+    setLayout(layout);
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', up);
+  handle.addEventListener('pointercancel', up);
 }
 
 function startBarDrag(e, bar, p) {
@@ -1122,6 +1140,7 @@ function startBarDrag(e, bar, p) {
   bar.addEventListener('pointercancel', up);
 }
 
+$('btn-layout').addEventListener('click', enterEditMode);
 $('edit-done').addEventListener('click', exitEditMode);
 armConfirm($('edit-reset'), 'Tap again to reset', () => {
   setLayout(null);

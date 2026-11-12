@@ -506,3 +506,41 @@ input.invalid { outline: 2px solid #ff8a80; }
 .free-bar .plus { grid-area: plus; }
 .free-bar .life-val { grid-area: val; font-size: 2rem; }
 .rot-btn { touch-action: manipulation; }
+
+/* Life rows without the Out button: icon/name opens the player menu */
+.life-row { grid-template-columns: 1fr 48px 60px 48px; }
+.life-row .name {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 4px;
+  margin: -6px 0;
+  border-radius: 10px;
+  cursor: pointer;
+  min-width: 0;
+  min-height: 44px;
+  touch-action: manipulation;
+}
+.life-row .name:active { background: rgba(255,255,255,.08); }
+.life-row .name .badge { width: 28px; height: 28px; font-size: 15px; }
+.life-row.out > :not(.name) { opacity: .4; }
+.life-row.out .name { opacity: .55; }
+
+.life-row.free-bar {
+  width: 200px;
+  grid-template-columns: 52px 1fr 52px;
+  grid-template-areas: "name name name" "minus val plus";
+}
+
+/* Layout button on the life screen */
+.life-head { position: relative; }
+.layout-btn { position: absolute; right: 10px; top: 10px; background: var(--panel); }
+
+/* Centered dialog variant of the sheet */
+.sheet-backdrop.center { align-items: center; }
+.sheet.dialog { border-radius: 18px; max-width: 340px; margin: 0 16px; }
+.btn-danger-solid { background: var(--danger); color: #fff; }
