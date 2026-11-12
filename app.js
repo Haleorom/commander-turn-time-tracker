@@ -594,6 +594,7 @@ function loadGame() {
   if (!Array.isArray(g.out) || g.out.length !== g.players.length) g.out = g.players.map(() => null);
   if (!Array.isArray(g.colors) || g.colors.length !== g.players.length) g.colors = g.players.map((_, i) => defaultLook(i).color);
   if (!Array.isArray(g.icons) || g.icons.length !== g.players.length) g.icons = g.players.map((_, i) => defaultLook(i).icon);
+  if (!Array.isArray(g.cmd) || g.cmd.length !== g.players.length) g.cmd = g.players.map(() => g.players.map(() => 0));
   game = g;
   renderGame();
   startTicking();
@@ -620,6 +621,7 @@ function startGame(players, profile, startingLife = DEFAULT_LIFE) {
     startingLife,
     life: names.map(() => startingLife),
     out: names.map(() => null),
+    cmd: names.map(() => names.map(() => 0)),   // cmd[target][source] = commander damage taken
     log: [],
     history: [],
   };
@@ -850,7 +852,11 @@ function createLifeRow(p) {
   nm.className = 'name';
   nm.setAttribute('aria-label', `${name}: player options`);
   nm.append(makeBadge(look.color, look.icon, 'sm'), Object.assign(document.createElement('span'), { textContent: name }));
-  nm.addEventListener('click', () => { if (!editMode) openPlayerMenu(p); });
+  nm.addEventListener('click', () => {
+    if (editMode || nm.dataset.dragged) { delete nm.dataset.dragged; return; }
+    openPlayerMenu(p);
+  });
+  nm.addEventListener('pointerdown', (e) => startCmdDrag(e, nm, p));
   const minus = document.createElement('button');
   minus.className = 'btn pm minus';
   minus.textContent = '−';
@@ -863,7 +869,9 @@ function createLifeRow(p) {
   plus.setAttribute('aria-label', `Increase ${name}'s life`);
   attachPm(minus, p, -1);
   attachPm(plus, p, +1);
-  row.append(nm, minus, val, plus);
+  const cmdList = document.createElement('div');
+  cmdList.className = 'cmd-list';
+  row.append(nm, minus, val, plus, cmdList);
   return row;
 }
 
@@ -873,6 +881,28 @@ function updateLifeRow(row, p) {
   const val = row.querySelector('.life-val');
   val.textContent = game.life[p];
   val.classList.toggle('low', game.life[p] <= 0);
+  renderCmdList(row.querySelector('.cmd-list'), p);
+}
+
+/* "🐉 Tobia – 7" for every player who dealt commander damage to p. */
+function renderCmdList(box, p) {
+  const taken = game.cmd[p];
+  const key = taken.join(',');
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.innerHTML = '';
+  taken.forEach((dmg, src) => {
+    if (dmg <= 0) return;
+    const look = lookOf(game, src);
+    const line = document.createElement('div');
+    line.className = 'cmd-line' + (dmg >= CMD_LETHAL ? ' lethal' : '');
+    line.append(
+      makeBadge(look.color, look.icon, 'xs'),
+      Object.assign(document.createElement('span'), { className: 'cmd-name', textContent: game.players[src] }),
+      Object.assign(document.createElement('span'), { className: 'cmd-val', textContent: `– ${dmg}` }),
+    );
+    box.appendChild(line);
+  });
 }
 
 /* Player menu popup */
@@ -926,37 +956,166 @@ function renderLife(rebuild) {
   renderBars(rebuild);
 }
 
-/* Read-only life totals on the timer screen (used when there is no custom layout). */
+/* Timer screen without a custom layout: full player widgets in their default position
+ * (a grid above the Undo / Next buttons). */
 function renderLifeStrip() {
   const strip = $('life-strip');
   if (strip.children.length !== game.players.length) {
     strip.innerHTML = '';
-    game.players.forEach(() => {
-      const chip = document.createElement('div');
-      chip.className = 'life-chip';
-      const bd = makeBadge('#888', '', 'xs');
-      const nm = document.createElement('span');
-      nm.className = 'chip-name';
-      const val = document.createElement('span');
-      val.className = 'chip-val';
-      chip.append(bd, nm, val);
-      strip.appendChild(chip);
+    game.players.forEach((_, p) => {
+      const w = createLifeRow(p);
+      w.classList.add('mini-bar');
+      strip.appendChild(w);
     });
   }
-  [...strip.children].forEach((chip, p) => {
-    chip.classList.toggle('current', p === game.player);
-    chip.classList.toggle('out', game.out[p] != null);
-    chip.classList.toggle('low', game.life[p] <= 0);
-    const lk = lookOf(game, p);
-    chip.style.setProperty('--pc', lk.color);
-    const bd = chip.querySelector('.badge');
-    bd.style.setProperty('--pc', lk.color);
-    bd.textContent = lk.icon;
-    chip.querySelector('.chip-name').textContent = game.players[p];
-    chip.querySelector('.chip-val').textContent = game.life[p];
-  });
+  [...strip.children].forEach((w, p) => updateLifeRow(w, p));
   renderBars(false);
 }
+
+/* ---------- COMMANDER DAMAGE ---------- */
+const CMD_LETHAL = 21;
+
+/* Drag from a player's name to another player's widget to deal commander damage. */
+function startCmdDrag(e, nameBtn, src) {
+  if (editMode || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  const sx = e.clientX;
+  const sy = e.clientY;
+  const look = lookOf(game, src);
+  const svg = $('cmd-line-layer');
+  const line = $('cmd-line');
+  const dot = $('cmd-dot');
+  let dragging = false;
+  let target = null;
+  const origin = nameBtn.querySelector('.badge').getBoundingClientRect();
+  const ox = origin.left + origin.width / 2;
+  const oy = origin.top + origin.height / 2;
+
+  const setTarget = (t) => {
+    if (target === t) return;
+    document.querySelectorAll('.life-row.drop-target').forEach((r) => r.classList.remove('drop-target'));
+    target = t;
+    if (t) t.classList.add('drop-target');
+  };
+  const move = (ev) => {
+    if (!dragging) {
+      if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 10) return;
+      dragging = true;
+      nameBtn.dataset.dragged = '1';
+      svg.classList.remove('hidden');
+      line.setAttribute('stroke', look.color);
+      dot.setAttribute('fill', look.color);
+      line.setAttribute('x1', ox);
+      line.setAttribute('y1', oy);
+    }
+    line.setAttribute('x2', ev.clientX);
+    line.setAttribute('y2', ev.clientY);
+    dot.setAttribute('cx', ev.clientX);
+    dot.setAttribute('cy', ev.clientY);
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const row = el && el.closest('.life-row');
+    setTarget(row && Number(row.dataset.p) !== src ? row : null);
+  };
+  const up = () => {
+    nameBtn.removeEventListener('pointermove', move);
+    nameBtn.removeEventListener('pointerup', up);
+    nameBtn.removeEventListener('pointercancel', cancel);
+    svg.classList.add('hidden');
+    const t = target;
+    setTarget(null);
+    if (dragging && t) openCmdPopup(src, Number(t.dataset.p));
+    // A real drag must not also count as a tap on the name.
+    if (dragging) setTimeout(() => { delete nameBtn.dataset.dragged; }, 400);
+  };
+  const cancel = () => { target = null; up(); };
+  nameBtn.setPointerCapture(e.pointerId);
+  nameBtn.addEventListener('pointermove', move);
+  nameBtn.addEventListener('pointerup', up);
+  nameBtn.addEventListener('pointercancel', cancel);
+}
+
+/* Popup: amount of this hit (−/+), preview of the new total and life. */
+let cmdSrc = null;
+let cmdDst = null;
+let cmdAmount = 0;
+
+function openCmdPopup(src, dst) {
+  cmdSrc = src;
+  cmdDst = dst;
+  cmdAmount = 0;
+  const ls = lookOf(game, src);
+  const ld = lookOf(game, dst);
+  const head = $('cmd-head');
+  head.innerHTML = '';
+  head.append(
+    makeBadge(ls.color, ls.icon, 'md'),
+    Object.assign(document.createElement('strong'), { textContent: game.players[src] }),
+    Object.assign(document.createElement('span'), { className: 'muted', textContent: '→' }),
+    makeBadge(ld.color, ld.icon, 'md'),
+    Object.assign(document.createElement('strong'), { textContent: game.players[dst] }),
+  );
+  renderCmdPopup();
+  $('cmd-popup').classList.remove('hidden');
+}
+
+function cmdPreview() {
+  const old = game.cmd[cmdDst][cmdSrc];
+  const total = Math.max(0, old + cmdAmount);
+  const delta = total - old;                 // what actually changes (never below 0 total)
+  return { old, total, delta, life: game.life[cmdDst] - delta };
+}
+
+function renderCmdPopup() {
+  const pv = cmdPreview();
+  $('cmd-amount').textContent = (cmdAmount > 0 ? '+' : '') + cmdAmount;
+  $('cmd-total').textContent = `Commander damage: ${pv.old} → ${pv.total}`;
+  $('cmd-life').textContent = `${game.players[cmdDst]}'s life: ${game.life[cmdDst]} → ${pv.life}`;
+  const lethal = pv.total >= CMD_LETHAL;
+  $('cmd-warning').classList.toggle('hidden', !lethal);
+  $('cmd-warning').textContent = `${CMD_LETHAL}+ commander damage: ${game.players[cmdDst]} loses.`;
+  const canRemove = lethal && game.out[cmdDst] == null;
+  $('cmd-save-out').classList.toggle('hidden', !canRemove);
+  $('cmd-save-out').textContent = `Save and remove ${game.players[cmdDst]}`;
+  $('cmd-save').disabled = pv.delta === 0;
+}
+
+function applyCmd(removeTarget) {
+  const pv = cmdPreview();
+  if (pv.delta !== 0) {
+    game.cmd[cmdDst][cmdSrc] = pv.total;
+    game.life[cmdDst] -= pv.delta;
+  }
+  if (removeTarget && game.out[cmdDst] == null) game.out[cmdDst] = game.turn;
+  saveGame();
+  closeCmdPopup();
+  refreshLife();
+}
+
+function closeCmdPopup() {
+  $('cmd-popup').classList.add('hidden');
+  cmdSrc = cmdDst = null;
+}
+
+function attachStepper(btn, delta) {
+  let delay = null;
+  let interval = null;
+  const step = () => { cmdAmount += delta; renderCmdPopup(); };
+  const stop = () => { clearTimeout(delay); clearInterval(interval); delay = interval = null; };
+  btn.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    stop();
+    step();
+    delay = setTimeout(() => { interval = setInterval(step, 90); }, 450);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => btn.addEventListener(ev, stop));
+  btn.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+attachStepper($('cmd-minus'), -1);
+attachStepper($('cmd-plus'), +1);
+$('cmd-save').addEventListener('click', () => applyCmd(false));
+$('cmd-save-out').addEventListener('click', () => applyCmd(true));
+$('cmd-cancel').addEventListener('click', closeCmdPopup);
+$('cmd-popup').addEventListener('click', (e) => { if (e.target.id === 'cmd-popup') closeCmdPopup(); });
 
 /* ---------- FREE LIFE BARS (custom layout) ---------- */
 function getLayout() {
@@ -1022,7 +1181,7 @@ function renderBars(rebuild) {
     layer.innerHTML = '';
     game.players.forEach((_, p) => {
       const bar = createLifeRow(p);
-      bar.classList.add('free-bar');
+      bar.classList.add('free-bar', 'mini-bar');
       const rot = document.createElement('button');
       rot.className = 'rot-btn';
       rot.textContent = '⟳';
@@ -1046,21 +1205,48 @@ function enterEditMode() {
   if (!getLayout()) {
     const W = window.innerWidth;
     const H = window.innerHeight;
-    const rows = [...$('life-list').children];
-    if (visibleGameScreen() === 'life' && rows.length) {
-      // Start from where the rows are in the list right now.
-      setLayout(rows.map((row) => {
-        const r = row.getBoundingClientRect();
+    const widgets = [...$('life-strip').children];
+    if (visibleGameScreen() === 'game' && widgets.length && widgets[0].getBoundingClientRect().width > 0) {
+      // From the timer screen: start exactly where the default widgets are.
+      setLayout(widgets.map((w) => {
+        const r = w.getBoundingClientRect();
         return { x: (r.left + r.width / 2) / W, y: (r.top + r.height / 2) / H, rot: 0 };
       }));
     } else {
-      // From the timer screen: a centred column, evenly spaced.
-      const n = game.players.length;
-      setLayout(game.players.map((_, i) => ({ x: 0.5, y: (i + 1) / (n + 1), rot: 0 })));
+      setLayout(defaultGridLayout());
     }
   }
   editMode = true;
   renderLife(true);
+}
+
+/* Two centred columns, like the timer screen's default widgets (sizes measured from a real bar). */
+function defaultGridLayout() {
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  $('bars-layer').classList.remove('hidden');
+  let w = 0;
+  let h = 0;
+  game.players.forEach((_, p) => {             // tallest widget (commander damage lines add height)
+    const probe = createLifeRow(p);
+    probe.classList.add('free-bar', 'mini-bar');
+    probe.style.visibility = 'hidden';
+    $('bars-layer').appendChild(probe);
+    updateLifeRow(probe, p);
+    w = Math.max(w, probe.offsetWidth);
+    h = Math.max(h, probe.offsetHeight);
+    probe.remove();
+  });
+  const n = game.players.length;
+  const rows = Math.ceil(n / 2);
+  const gap = 8;                    // same as the timer screen grid
+  const top = Math.max(h / 2, H * 0.55 - (rows * h + (rows - 1) * gap) / 2 + h / 2);
+  return game.players.map((_, i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = W / 2 + (col === 0 ? -1 : 1) * (w / 2 + gap / 2);
+    return { x: x / W, y: (top + row * (h + gap)) / H, rot: 0 };
+  });
 }
 
 function exitEditMode() {
@@ -1181,6 +1367,7 @@ function openEndScreen() {
     winner: null,
     startingLife: game.startingLife,
     finalLife: game.life.slice(),
+    cmd: game.cmd.map((r) => r.slice()),
     out: game.out.slice(),
     log,
   };
@@ -1286,9 +1473,11 @@ let detailView = 'times';
 function renderDetailView(g) {
   $('seg-times').classList.toggle('selected', detailView === 'times');
   $('seg-life').classList.toggle('selected', detailView === 'life');
+  $('seg-cmd').classList.toggle('selected', detailView === 'cmd');
   const box = $('detail-table');
   box.innerHTML = '';
-  box.appendChild(detailView === 'life' ? buildLifeTable(g) : buildTimesTable(g));
+  const build = { life: buildLifeTable, cmd: buildCmdTable }[detailView] || buildTimesTable;
+  box.appendChild(build(g));
 }
 
 function playerHeader(table, g, firstLabel) {
@@ -1372,6 +1561,36 @@ function buildTimesTable(g) {
 function currentDetail() { return store.get(KEY_HISTORY, []).find((x) => x.id === detailId); }
 $('seg-times').addEventListener('click', () => { detailView = 'times'; const g = currentDetail(); if (g) renderDetailView(g); });
 $('seg-life').addEventListener('click', () => { detailView = 'life'; const g = currentDetail(); if (g) renderDetailView(g); });
+$('seg-cmd').addEventListener('click', () => { detailView = 'cmd'; const g = currentDetail(); if (g) renderDetailView(g); });
+
+/* Commander damage: one row per player who took damage, one column per attacker. */
+function buildCmdTable(g) {
+  const table = document.createElement('table');
+  table.className = 'times';
+  playerHeader(table, g, 'Taken ↓ / from →');
+  const tbody = table.createTBody();
+  const m = Array.isArray(g.cmd) ? g.cmd : null;
+  const any = m && m.some((row) => row.some((v) => v > 0));
+  if (!any) {
+    const c = tbody.insertRow().insertCell();
+    c.colSpan = g.players.length + 1;
+    c.textContent = 'No commander damage in this game.';
+    return table;
+  }
+  m.forEach((row, dst) => {
+    if (!row.some((v) => v > 0)) return;
+    const r = tbody.insertRow();
+    const h = r.insertCell();
+    h.textContent = `${lookOf(g, dst).icon} ${g.players[dst]}`;
+    h.style.color = lookOf(g, dst).color;
+    row.forEach((v) => {
+      const c = r.insertCell();
+      c.textContent = v > 0 ? v : '—';
+      if (v >= CMD_LETHAL) c.className = 'out-cell';
+    });
+  });
+  return table;
+}
 
 $('detail-back').addEventListener('click', openHistory);
 armConfirm($('detail-delete'), 'Tap again to delete', () => {

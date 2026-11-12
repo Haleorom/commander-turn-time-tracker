@@ -114,7 +114,7 @@
         <div class="hold-track"><div id="hold-bar" class="hold-bar"></div></div>
         <div id="game-hint" class="muted small hint">Tap the timer to start</div>
       </div>
-      <div id="life-strip" class="life-strip" aria-label="Life totals"></div>
+      <div id="life-strip" class="life-strip" aria-label="Players"></div>
       <footer class="bar bar-bottom two game-actions">
         <button id="btn-undo" class="btn btn-big">↶ Undo</button>
         <button id="btn-next" class="btn btn-primary btn-big icon-btn" aria-label="Next player" title="Next player"><svg viewBox="0 0 24 24" width="38" height="38" aria-hidden="true"><path fill="currentColor" d="M5 5.5v13a1 1 0 0 0 1.5.87l10-6.5a1 1 0 0 0 0-1.74l-10-6.5A1 1 0 0 0 5 5.5z"/><rect x="17.5" y="5" width="2.5" height="14" rx="1.25" fill="currentColor"/></svg></button>
@@ -176,6 +176,7 @@
       <div class="seg">
         <button id="seg-times" class="btn selected">Times</button>
         <button id="seg-life" class="btn">Life</button>
+        <button id="seg-cmd" class="btn">Cmd dmg</button>
       </div>
       <div id="detail-table" class="table-wrap"></div>
     </div>
@@ -191,6 +192,31 @@
     <div class="edit-buttons">
       <button id="edit-reset" class="btn btn-danger">Reset layout</button>
       <button id="edit-done" class="btn btn-primary">Done</button>
+    </div>
+  </div>
+
+  <!-- COMMANDER DAMAGE: drag line + popup -->
+  <svg id="cmd-line-layer" class="cmd-line-layer hidden" aria-hidden="true">
+    <line id="cmd-line" x1="0" y1="0" x2="0" y2="0" stroke-width="5" stroke-linecap="round" stroke-dasharray="2 10"></line>
+    <circle id="cmd-dot" cx="0" cy="0" r="12" fill-opacity=".85"></circle>
+  </svg>
+  <div id="cmd-popup" class="sheet-backdrop center hidden">
+    <div class="sheet dialog" role="dialog" aria-label="Commander damage">
+      <div class="muted small">Commander damage</div>
+      <div id="cmd-head" class="sheet-head cmd-head"></div>
+      <div class="cmd-stepper">
+        <button id="cmd-minus" class="btn pm">−</button>
+        <output id="cmd-amount">0</output>
+        <button id="cmd-plus" class="btn pm">+</button>
+      </div>
+      <div id="cmd-total" class="small"></div>
+      <div id="cmd-life" class="small muted"></div>
+      <div id="cmd-warning" class="cmd-warning hidden"></div>
+      <button id="cmd-save-out" class="btn btn-wide btn-danger-solid hidden"></button>
+      <div class="edit-buttons">
+        <button id="cmd-cancel" class="btn">Cancel</button>
+        <button id="cmd-save" class="btn btn-primary">Save</button>
+      </div>
     </div>
   </div>
 
