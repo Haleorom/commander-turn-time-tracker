@@ -673,3 +673,6 @@ input.invalid { outline: 2px solid #ff8a80; }
 .no-timer .turn-box .turn { display: none; }
 .no-timer .turn-box .profile-tag { font-size: 1.05rem; color: var(--text); }
 .no-timer .life-strip { flex: 1; align-content: center; padding-bottom: calc(16px + var(--safe-bottom)); }
+
+/* A player who is out can't have life changed: hide the − / + zones (layout stays the same). */
+.life-row.out .pm { visibility: hidden; pointer-events: none; }
