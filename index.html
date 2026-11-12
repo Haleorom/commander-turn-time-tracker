@@ -102,8 +102,11 @@
     <div class="side-main">
       <header class="bar game-bar">
         <button id="btn-end" class="btn btn-ghost btn-small">End game</button>
-        <div class="turn">Turn <strong id="game-turn">1</strong></div>
-        <div class="profile-tag small muted" id="game-profile"></div>
+        <div class="turn-box">
+          <div class="turn">Turn <strong id="game-turn">1</strong></div>
+          <div class="profile-tag small muted" id="game-profile"></div>
+        </div>
+        <button id="btn-layout-game" class="btn btn-small layout-btn-inline" aria-label="Arrange the life bars">✥ Layout</button>
       </header>
       <div class="game-main">
         <div id="game-player" class="player-name">Player 1</div>
@@ -114,7 +117,7 @@
       <div id="life-strip" class="life-strip" aria-label="Life totals"></div>
       <footer class="bar bar-bottom two game-actions">
         <button id="btn-undo" class="btn btn-big">↶ Undo</button>
-        <button id="btn-next" class="btn btn-primary btn-big">Next player ›</button>
+        <button id="btn-next" class="btn btn-primary btn-big icon-btn" aria-label="Next player" title="Next player"><svg viewBox="0 0 24 24" width="38" height="38" aria-hidden="true"><path fill="currentColor" d="M5 5.5v13a1 1 0 0 0 1.5.87l10-6.5a1 1 0 0 0 0-1.74l-10-6.5A1 1 0 0 0 5 5.5z"/><rect x="17.5" y="5" width="2.5" height="14" rx="1.25" fill="currentColor"/></svg></button>
       </footer>
     </div>
     <button id="btn-to-life" class="side-btn" aria-label="Life"><svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path fill="currentColor" d="M12 21s-7.5-4.6-10-9.3C.4 8.4 2.3 4.5 6 4.5c2.1 0 3.4 1.1 4.2 2.3h3.6c.8-1.2 2.1-2.3 4.2-2.3 3.7 0 5.6 3.9 4 7.2C19.5 16.4 12 21 12 21z"/></svg></button>

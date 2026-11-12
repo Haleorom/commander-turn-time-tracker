@@ -117,7 +117,7 @@ function show(name) {
   for (const s of screens) $('screen-' + s).classList.toggle('hidden', s !== name);
   document.body.classList.remove('overtime');
   if (name === 'game' || name === 'life') { acquireWakeLock(); } else { releaseWakeLock(); }
-  if (name !== 'life') editMode = false;
+  editMode = false;                  // leaving a screen always ends repositioning
   if (name === 'life') renderLife(true);
   if (game) renderBars(true);
   if (name === 'menu') renderMenu();
@@ -708,6 +708,7 @@ function renderGame() {
   gp.style.color = look.color;
   $('screen-game').style.setProperty('--pc', look.color);
   $('game-profile').textContent = game.profileName;
+  $('btn-layout-game').classList.toggle('hidden', editMode);
   if (!$('screen-life').classList.contains('hidden')) renderLife(false);
   renderLifeStrip();
   $('btn-undo').classList.toggle('invisible', game.history.length === 0);
@@ -1012,7 +1013,9 @@ function renderBars(rebuild) {
   layer.classList.toggle('hidden', !active);
   $('life-list').classList.toggle('hidden', active && scr === 'life');
   $('life-strip').classList.toggle('hidden', active && scr === 'game');
-  $('edit-bar').classList.toggle('hidden', !(editMode && scr === 'life'));
+  $('edit-bar').classList.toggle('hidden', !(editMode && scr));
+  $('edit-bar').classList.toggle('on-game', scr === 'game');
+  $('btn-layout-game').classList.toggle('hidden', editMode);
   if (!active) { layer.innerHTML = ''; return; }
 
   if (rebuild || layer.children.length !== game.players.length) {
@@ -1041,13 +1044,20 @@ function renderBars(rebuild) {
 function enterEditMode() {
   if (!game) return;
   if (!getLayout()) {
-    // Start from where the rows are in the list right now.
     const W = window.innerWidth;
     const H = window.innerHeight;
-    setLayout([...$('life-list').children].map((row) => {
-      const r = row.getBoundingClientRect();
-      return { x: (r.left + r.width / 2) / W, y: (r.top + r.height / 2) / H, rot: 0 };
-    }));
+    const rows = [...$('life-list').children];
+    if (visibleGameScreen() === 'life' && rows.length) {
+      // Start from where the rows are in the list right now.
+      setLayout(rows.map((row) => {
+        const r = row.getBoundingClientRect();
+        return { x: (r.left + r.width / 2) / W, y: (r.top + r.height / 2) / H, rot: 0 };
+      }));
+    } else {
+      // From the timer screen: a centred column, evenly spaced.
+      const n = game.players.length;
+      setLayout(game.players.map((_, i) => ({ x: 0.5, y: (i + 1) / (n + 1), rot: 0 })));
+    }
   }
   editMode = true;
   renderLife(true);
@@ -1141,6 +1151,7 @@ function startBarDrag(e, bar, p) {
 }
 
 $('btn-layout').addEventListener('click', enterEditMode);
+$('btn-layout-game').addEventListener('click', enterEditMode);
 $('edit-done').addEventListener('click', exitEditMode);
 armConfirm($('edit-reset'), 'Tap again to reset', () => {
   setLayout(null);

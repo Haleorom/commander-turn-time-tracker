@@ -544,3 +544,19 @@ input.invalid { outline: 2px solid #ff8a80; }
 .sheet-backdrop.center { align-items: center; }
 .sheet.dialog { border-radius: 18px; max-width: 340px; margin: 0 16px; }
 .btn-danger-solid { background: var(--danger); color: #fff; }
+
+/* Timer screen header: End game · Turn/profile · Layout */
+.game-bar { gap: 8px; }
+.game-bar > :first-child, .game-bar > .layout-btn-inline { flex: 0 0 auto; }
+.turn-box { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; }
+.turn-box .profile-tag { max-width: 100%; text-align: center; }
+.layout-btn-inline { background: var(--panel); }
+.edit-toolbar.on-game { left: 0; right: 56px; }
+
+/* Icon-only Next player button */
+.icon-btn { display: flex; align-items: center; justify-content: center; }
+
+/* Screen controls always stay above the free life bars, so they can never be covered */
+#btn-end, #btn-layout-game, #btn-layout, #btn-undo, #btn-next { position: relative; z-index: 6; }
+#btn-layout { position: absolute; }
+.edit-toolbar { z-index: 7; }
