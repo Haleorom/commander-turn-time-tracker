@@ -676,3 +676,24 @@ input.invalid { outline: 2px solid #ff8a80; }
 
 /* A player who is out can't have life changed: hide the − / + zones (layout stays the same). */
 .life-row.out .pm { visibility: hidden; pointer-events: none; }
+
+/* Resize handle: bottom-left corner, opposite the rotate handle */
+.size-btn {
+  display: none;
+  position: absolute;
+  bottom: -14px;
+  left: -14px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1.05rem;
+  cursor: nesw-resize;
+  padding: 0;
+  touch-action: none;
+}
+.free-bar.editing .size-btn { display: block; }
+.free-bar.editing .rot-btn { touch-action: none; }
+.free-bar.editing button.size-btn { pointer-events: auto; }

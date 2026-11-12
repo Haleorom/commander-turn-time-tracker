@@ -1142,14 +1142,14 @@ function visibleGameScreen() {
 }
 
 // Keep a bar (centre cx, cy, any rotation) fully on screen and off the side strips.
-function clampCenter(bar, rot, cx, cy) {
+function clampCenter(bar, rot, cx, cy, scale = 1) {
   const W = window.innerWidth;
   const H = window.innerHeight;
   const rad = (rot * Math.PI) / 180;
   const c = Math.abs(Math.cos(rad));
   const s = Math.abs(Math.sin(rad));
-  const w = bar.offsetWidth;
-  const h = bar.offsetHeight;
+  const w = bar.offsetWidth * scale;
+  const h = bar.offsetHeight * scale;
   const hw = (w * c + h * s) / 2;
   const hh = (w * s + h * c) / 2;
   const minX = SIDE_STRIP + hw;
@@ -1163,10 +1163,11 @@ function clampCenter(bar, rot, cx, cy) {
 }
 
 function placeBar(bar, pos) {
-  const c = clampCenter(bar, pos.rot, pos.x * window.innerWidth, pos.y * window.innerHeight);
+  const sc = pos.scale || 1;
+  const c = clampCenter(bar, pos.rot, pos.x * window.innerWidth, pos.y * window.innerHeight, sc);
   bar.style.left = c.x + 'px';
   bar.style.top = c.y + 'px';
-  bar.style.transform = `translate(-50%, -50%) rotate(${pos.rot}deg)`;
+  bar.style.transform = `translate(-50%, -50%) rotate(${pos.rot}deg) scale(${sc})`;
 }
 
 function renderBars(rebuild) {
@@ -1190,7 +1191,12 @@ function renderBars(rebuild) {
       rot.textContent = '⟳';
       rot.setAttribute('aria-label', 'Drag to rotate, tap for 90°');
       rot.addEventListener('pointerdown', (e) => startRotate(e, bar, p));
-      bar.appendChild(rot);
+      const size = document.createElement('button');
+      size.className = 'size-btn';
+      size.textContent = '⤡';
+      size.setAttribute('aria-label', 'Drag to resize, tap for 100%');
+      size.addEventListener('pointerdown', (e) => startResize(e, bar, p));
+      bar.append(rot, size);
       bar.addEventListener('pointerdown', (e) => startBarDrag(e, bar, p));
       layer.appendChild(bar);
     });
@@ -1308,6 +1314,53 @@ function startRotate(e, bar, p) {
   handle.addEventListener('pointercancel', up);
 }
 
+/* Resize handle: drag away from the bar's centre to grow it, towards it to shrink (70%–200%);
+ * tap = back to 100%. Distance-based, so it works at any rotation. */
+const MIN_SCALE = 0.7;
+const MAX_SCALE = 2;
+
+function startResize(e, bar, p) {
+  if (!editMode || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const layout = getLayout();
+  const pos = layout[p];
+  const handle = e.currentTarget;
+  bar.style.zIndex = ++topZ;
+  const box = bar.getBoundingClientRect();
+  const cx = box.left + box.width / 2;
+  const cy = box.top + box.height / 2;
+  const d0 = Math.max(20, Math.hypot(e.clientX - cx, e.clientY - cy));
+  const s0 = pos.scale || 1;
+  const sx = e.clientX;
+  const sy = e.clientY;
+  let moved = false;
+  handle.setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+    moved = true;
+    const d = Math.hypot(ev.clientX - cx, ev.clientY - cy);
+    pos.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, s0 * (d / d0)));
+    placeBar(bar, pos);
+  };
+  const up = () => {
+    handle.removeEventListener('pointermove', move);
+    handle.removeEventListener('pointerup', up);
+    handle.removeEventListener('pointercancel', up);
+    if (!moved) pos.scale = 1;
+    pos.scale = Math.round(pos.scale * 100) / 100;
+    // Keep the stored centre where the (possibly clamped) bar really is.
+    const c = clampCenter(bar, pos.rot, pos.x * window.innerWidth, pos.y * window.innerHeight, pos.scale);
+    pos.x = c.x / window.innerWidth;
+    pos.y = c.y / window.innerHeight;
+    placeBar(bar, pos);
+    setLayout(layout);
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', up);
+  handle.addEventListener('pointercancel', up);
+}
+
 function startBarDrag(e, bar, p) {
   if (!editMode || (e.pointerType === 'mouse' && e.button !== 0)) return;
   e.preventDefault();
@@ -1317,12 +1370,12 @@ function startBarDrag(e, bar, p) {
   const startY = e.clientY;
   const W = window.innerWidth;
   const H = window.innerHeight;
-  const origin = clampCenter(bar, pos.rot, pos.x * W, pos.y * H);
+  const origin = clampCenter(bar, pos.rot, pos.x * W, pos.y * H, pos.scale || 1);
   bar.setPointerCapture(e.pointerId);
   bar.style.zIndex = ++topZ;
   bar.classList.add('dragging');
   const move = (ev) => {
-    const c = clampCenter(bar, pos.rot, origin.x + ev.clientX - startX, origin.y + ev.clientY - startY);
+    const c = clampCenter(bar, pos.rot, origin.x + ev.clientX - startX, origin.y + ev.clientY - startY, pos.scale || 1);
     pos.x = c.x / W;
     pos.y = c.y / H;
     placeBar(bar, pos);

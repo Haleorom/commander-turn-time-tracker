@@ -1,5 +1,5 @@
 // Offline-first service worker. Bump VERSION whenever app files change.
-const VERSION = 'v13';
+const VERSION = 'v14';
 const CACHE = 'ctt-' + VERSION;
 const ASSETS = [
   './',

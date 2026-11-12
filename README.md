@@ -22,7 +22,7 @@ A small offline PWA that gives each player a countdown per turn in Commander gam
 - **End game** → optionally pick the winner → *Save game* (or *Discard*).
 - **Commander damage**: drag from a player's icon/name to another player's widget; a popup sets the damage of that hit (−/+, negative to correct). It is added to the commander-damage total and subtracted from life; totals are listed under each widget ("🐉 Tobia – 7"), red at 21+, with an option to remove the player. Saved games show a *Cmd dmg* table in the history.
 - **Default position**: without a custom layout, the widgets sit in a two-column grid above the buttons.
-- **Custom life layout**: tap **✥ Layout** to enter repositioning mode. Drag any bar anywhere; drag its ⟳ handle to rotate it to any angle (snaps near 0/90/180/270°, a tap turns it 90°). *Done* saves, *Reset layout* goes back to the default grid. The layout is saved per number of players.
+- **Custom life layout**: tap **✥ Layout** to enter repositioning mode. Drag any bar anywhere; drag its ⟳ handle to rotate it to any angle (snaps near 0/90/180/270°, a tap turns it 90°); drag its ⤡ handle to resize it (70–200%, a tap resets to 100%). *Done* saves, *Reset layout* goes back to the default grid. The layout is saved per number of players.
 - **Games history**: every saved game with the time each player used on every turn (pauses excluded), plus total / average / longest turn per player, and a *Life* view with every player's life after each *Next player* press.
 - Game in progress, history, profiles and last setup are kept in `localStorage`, so they survive closing the app or restarting the phone.
 - Keeps the screen awake during a game (Screen Wake Lock API).
