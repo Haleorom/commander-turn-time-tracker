@@ -617,3 +617,47 @@ input.invalid { outline: 2px solid #ff8a80; }
 .mini-bar .pm { height: 36px; font-size: 1.2rem; }
 .mini-bar .life-val { font-size: 1.4rem; }
 .life-strip { align-items: start; }
+
+/* Compact widget v2: narrower, big − / + buttons.
+ * Line 1: icon + name … life total.  Line 2: [ − ][ + ].  Then commander damage lines. */
+:root { --bw: min(124px, calc((100vw - 2 * 56px - 8px) / 2)); }
+.life-strip { padding-left: 56px; justify-content: center; }   /* centred in the area shared with the life screen */
+.life-row.mini-bar {
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas: "name val" "minus plus" "cmd cmd";
+  column-gap: 6px;
+  row-gap: 5px;
+  padding: 6px 6px 6px 8px;
+}
+.mini-bar .name { grid-area: name; min-width: 0; font-size: .8rem; gap: 4px; }
+.mini-bar .name .badge { width: 20px; height: 20px; font-size: 11px; }
+.mini-bar .life-val { grid-area: val; text-align: right; font-size: 1.45rem; line-height: 1; align-self: center; padding-right: 2px; }
+.mini-bar .pm { height: 48px; font-size: 1.7rem; }
+
+/* Compact widget v3: name on its own line; − and + are the two halves of the second line
+ * (big tap zones) with the life total centred over them. */
+.life-row.mini-bar { grid-template-areas: "name name" "minus plus" "cmd cmd"; }
+.mini-bar .name { font-size: .85rem; gap: 5px; }
+.mini-bar .name .badge { width: 22px; height: 22px; font-size: 12px; }
+.mini-bar .pm {
+  height: 50px;
+  font-size: 1.5rem;
+  display: flex;
+  align-items: center;
+  padding: 0 9px;
+  color: var(--muted);
+}
+.mini-bar .minus { justify-content: flex-start; }
+.mini-bar .plus { justify-content: flex-end; }
+.mini-bar .life-val {
+  grid-area: auto;
+  grid-row: 2;
+  grid-column: 1 / -1;
+  justify-self: center;
+  align-self: center;
+  z-index: 1;
+  pointer-events: none;
+  text-align: center;
+  padding: 0;
+  font-size: 1.7rem;
+}
