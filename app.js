@@ -11,6 +11,7 @@ const KEY_SETUP = 'ctt.lastSetup';
 const KEY_HISTORY = 'ctt.history';
 const DEFAULT_HOLD_SECONDS = 4;
 const DEFAULT_LIFE = 40;
+const NO_TIMER = '__none__';          // setup choice: life counter only
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 8;
 
@@ -111,14 +112,13 @@ function profileSummary(entries) {
 
 /* ---------- DOM ---------- */
 const $ = (id) => document.getElementById(id);
-const screens = ['menu', 'setup', 'profiles', 'editor', 'game', 'life', 'end', 'history', 'detail'];
+const screens = ['menu', 'setup', 'profiles', 'editor', 'game', 'end', 'history', 'detail'];
 
 function show(name) {
   for (const s of screens) $('screen-' + s).classList.toggle('hidden', s !== name);
   document.body.classList.remove('overtime');
-  if (name === 'game' || name === 'life') { acquireWakeLock(); } else { releaseWakeLock(); }
+  if (name === 'game') { acquireWakeLock(); } else { releaseWakeLock(); }
   editMode = false;                  // leaving a screen always ends repositioning
-  if (name === 'life') renderLife(true);
   if (game) renderBars(true);
   if (name === 'menu') renderMenu();
   window.scrollTo(0, 0);
@@ -206,6 +206,11 @@ function openSetup() {
     o.textContent = p.name;
     sel.appendChild(o);
   }
+  const none = document.createElement('option');
+  none.value = NO_TIMER;
+  none.textContent = 'No timer (life counter only)';
+  sel.appendChild(none);
+  // Always propose a timed profile (the last one used, otherwise the first/default one).
   if (last && profiles.some((p) => p.id === last.profileId)) sel.value = last.profileId;
   renderSetup();
   show('setup');
@@ -245,8 +250,11 @@ function renderSetup() {
     row.append(handle, badgeBtn, inp);
     box.appendChild(row);
   }
-  const p = loadProfiles().find((x) => x.id === $('setup-profile').value);
-  $('setup-profile-summary').textContent = p ? profileSummary(p.entries) : '';
+  const choice = $('setup-profile').value;
+  const p = loadProfiles().find((x) => x.id === choice);
+  $('setup-profile-summary').textContent = choice === NO_TIMER
+    ? 'Life counter only: no timer, no turns, nothing saved to the history.'
+    : (p ? profileSummary(p.entries) : '');
 }
 
 /* Drag to reorder (pointer events, so it works with touch). */
@@ -341,8 +349,9 @@ $('players-inc').addEventListener('click', () => { if (setupCount < MAX_PLAYERS)
 $('setup-profile').addEventListener('change', renderSetup);
 
 $('btn-start').addEventListener('click', () => {
-  const profile = loadProfiles().find((x) => x.id === $('setup-profile').value);
-  if (!profile) return;
+  const choice = $('setup-profile').value;
+  const profile = choice === NO_TIMER ? null : loadProfiles().find((x) => x.id === choice);
+  if (choice !== NO_TIMER && !profile) return;
   const startingLife = Number($('setup-life').value);
   if (!Number.isInteger(startingLife) || startingLife < 1 || startingLife > 999) {
     $('setup-life').focus();
@@ -356,8 +365,13 @@ $('btn-start').addEventListener('click', () => {
     icon: pl.icon,
   }));
   // Remember all slots (also the ones beyond the current count) for the next game.
+  const prev = store.get(KEY_SETUP, null);
   store.set(KEY_SETUP, {
-    count: setupCount, players: setupPlayers.map((pl) => ({ ...pl })), profileId: profile.id, startingLife,
+    count: setupCount,
+    players: setupPlayers.map((pl) => ({ ...pl })),
+    // "No timer" is never remembered as the proposed choice.
+    profileId: profile ? profile.id : (prev && prev.profileId),
+    startingLife,
   });
   startGame(players, profile, startingLife);
 });
@@ -603,18 +617,20 @@ function loadGame() {
 
 function startGame(players, profile, startingLife = DEFAULT_LIFE) {
   const names = players.map((pl) => pl.name);
+  const noTimer = !profile;
   game = {
+    noTimer,
     id: uid(),
     startedAt: now(),
     players: names,
     colors: players.map((pl) => pl.color),
     icons: players.map((pl) => pl.icon),
-    profileName: profile.name,
-    entries: profile.entries.map((e) => ({ ...e })),
-    holdSeconds: profile.holdSeconds || DEFAULT_HOLD_SECONDS,
+    profileName: noTimer ? 'Life counter' : profile.name,
+    entries: noTimer ? [{ untilTurn: LAST_TURN, seconds: 0 }] : profile.entries.map((e) => ({ ...e })),
+    holdSeconds: noTimer ? DEFAULT_HOLD_SECONDS : (profile.holdSeconds || DEFAULT_HOLD_SECONDS),
     turn: 1,
     player: 0,
-    remainingMs: secondsForTurn(profile.entries, 1) * 1000,
+    remainingMs: noTimer ? 0 : secondsForTurn(profile.entries, 1) * 1000,
     runningSince: null,
     usedMs: 0,
     alerted: false,
@@ -633,6 +649,7 @@ function startGame(players, profile, startingLife = DEFAULT_LIFE) {
 
 function toggleRunning() {
   if (!game) return;
+  if (game.noTimer) return;
   if (game.runningSince == null) {
     game.runningSince = now();
   } else {
@@ -644,6 +661,7 @@ function toggleRunning() {
 
 function nextPlayer() {
   if (!game) return;
+  if (game.noTimer) return;
   settle();
   game.log.push({ turn: game.turn, player: game.player, ms: game.usedMs, life: game.life.slice() });
   game.history.push({
@@ -676,6 +694,7 @@ function nextPlayer() {
 
 function undo() {
   if (!game || game.history.length === 0) return;
+  if (game.noTimer) return;
   const prev = game.history.pop();
   game.log.pop();
   game.turn = prev.turn;
@@ -692,6 +711,7 @@ function undo() {
  * Time already spent in this turn stays counted in usedMs. */
 function resetTimer() {
   if (!game) return;
+  if (game.noTimer) return;
   settle();
   game.remainingMs = secondsForTurn(game.entries, game.turn) * 1000;
   game.alerted = false;
@@ -702,6 +722,7 @@ function resetTimer() {
 
 function renderGame() {
   if (!game) return;
+  $('screen-game').classList.toggle('no-timer', !!game.noTimer);
   $('game-turn').textContent = game.turn;
   const look = lookOf(game, game.player);
   const gp = $('game-player');
@@ -711,8 +732,7 @@ function renderGame() {
   $('screen-game').style.setProperty('--pc', look.color);
   $('game-profile').textContent = game.profileName;
   $('btn-layout-game').classList.toggle('hidden', editMode);
-  if (!$('screen-life').classList.contains('hidden')) renderLife(false);
-  renderLifeStrip();
+  renderLifeStrip(false);
   $('btn-undo').classList.toggle('invisible', game.history.length === 0);
   const running = game.runningSince != null;
   $('game-timer').classList.toggle('paused', !running);
@@ -723,7 +743,7 @@ function renderGame() {
 }
 
 function renderTimer() {
-  if (!game) return;
+  if (!game || game.noTimer) return;
   const ms = currentRemaining();
   const text = formatMs(ms);
   const el = $('game-timer');
@@ -731,11 +751,8 @@ function renderTimer() {
     el.textContent = text;
     el.classList.toggle('long', text.length >= 6);
   }
-  const mini = $('life-timer');
-  if (mini.textContent !== text) mini.textContent = text;
-  mini.classList.toggle('paused', game.runningSince == null);
   const over = ms <= 0;
-  if (!$('screen-game').classList.contains('hidden') || !$('screen-life').classList.contains('hidden')) {
+  if (!$('screen-game').classList.contains('hidden')) {
     document.body.classList.toggle('overtime', over);
   }
   if (over && game.runningSince != null && !game.alerted) {
@@ -758,7 +775,7 @@ let holdFired = false;
 let holdStartedAt = 0;
 
 function holdStart(e) {
-  if (!game || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  if (!game || game.noTimer || (e.pointerType === 'mouse' && e.button !== 0)) return;
   holdFired = false;
   holdStartedAt = now();
   clearTimeout(holdTimer);
@@ -794,14 +811,15 @@ timerEl.addEventListener('click', () => {
 
 $('btn-next').addEventListener('click', nextPlayer);
 $('btn-undo').addEventListener('click', undo);
-armConfirm($('btn-end'), 'Tap again to end', openEndScreen);
+armConfirm($('btn-end'), 'Tap again to end', () => {
+  if (game && game.noTimer) finishGame(false);   // life counter only: nothing to save
+  else openEndScreen();
+});
 
 /* ---------- LIFE ---------- */
-$('btn-to-life').addEventListener('click', () => show('life'));
-$('btn-to-time').addEventListener('click', () => { show('game'); renderGame(); });
 
 const KEY_LAYOUT = 'ctt.layout';   // { [playerCount]: [{ x, y, rot }] }, x/y = bar centre as a fraction of the viewport, rot in degrees
-const SIDE_STRIP = 56;             // keep free bars off the ⏳ / ❤ side strips
+const SIDE_STRIP = 0;              // horizontal margin kept free at the screen edges
 const ROT_SNAP = 6;                // degrees: free rotation snaps to 0/90/180/270 when this close
 let editMode = false;
 let topZ = 1;                      // bar being moved/rotated comes to the front
@@ -876,7 +894,7 @@ function createLifeRow(p) {
 }
 
 function updateLifeRow(row, p) {
-  row.classList.toggle('current', p === game.player);
+  row.classList.toggle('current', !game.noTimer && p === game.player);
   row.classList.toggle('out', game.out[p] != null);
   const val = row.querySelector('.life-val');
   val.textContent = game.life[p];
@@ -915,9 +933,12 @@ function openPlayerMenu(p) {
   head.innerHTML = '';
   head.append(makeBadge(look.color, look.icon, 'lg'), Object.assign(document.createElement('strong'), { textContent: game.players[p] }));
   const isOut = game.out[p] != null;
-  $('pmenu-status').textContent = isOut ? `Out since turn ${game.out[p]}` : `Life ${game.life[p]}`;
+  $('pmenu-status').textContent = isOut
+    ? (game.noTimer ? 'Marked as lost' : `Out since turn ${game.out[p]}`)
+    : `Life ${game.life[p]}`;
   const btn = $('pmenu-out');
-  btn.textContent = isOut ? 'Put back in the game' : 'Remove from turn order (lost)';
+  btn.textContent = isOut ? 'Put back in the game'
+    : (game.noTimer ? 'Mark as lost' : 'Remove from turn order (lost)');
   btn.className = 'btn btn-wide ' + (isOut ? 'btn-primary' : 'btn-danger-solid');
   $('player-menu').classList.remove('hidden');
 }
@@ -935,32 +956,15 @@ $('pmenu-cancel').addEventListener('click', closePlayerMenu);
 $('player-menu').addEventListener('click', (e) => { if (e.target.id === 'player-menu') closePlayerMenu(); });
 
 function refreshLife() {
-  renderLife(false);
-  if (!$('screen-game').classList.contains('hidden')) renderLifeStrip();
-}
-
-// rebuild = true recreates the rows (screen opened); false just updates values.
-function renderLife(rebuild) {
-  if (!game) return;
-  const list = $('life-list');
-  if (rebuild || list.children.length !== game.players.length) {
-    list.innerHTML = '';
-    game.players.forEach((_, p) => list.appendChild(createLifeRow(p)));
-  }
-  [...list.children].forEach((row, p) => updateLifeRow(row, p));
-  $('life-turn').textContent = game.turn;
-  const cl = lookOf(game, game.player);
-  $('life-current').textContent = `${cl.icon} ${game.players[game.player]}`;
-  $('life-current').style.color = cl.color;
-  $('btn-layout').classList.toggle('hidden', editMode);
-  renderBars(rebuild);
+  if (game) renderLifeStrip(false);
 }
 
 /* Timer screen without a custom layout: full player widgets in their default position
  * (a grid above the Undo / Next buttons). */
-function renderLifeStrip() {
+function renderLifeStrip(rebuild) {
+  if (!game) return;
   const strip = $('life-strip');
-  if (strip.children.length !== game.players.length) {
+  if (rebuild || strip.children.length !== game.players.length) {
     strip.innerHTML = '';
     game.players.forEach((_, p) => {
       const w = createLifeRow(p);
@@ -969,7 +973,7 @@ function renderLifeStrip() {
     });
   }
   [...strip.children].forEach((w, p) => updateLifeRow(w, p));
-  renderBars(false);
+  renderBars(rebuild);
 }
 
 /* ---------- COMMANDER DAMAGE ---------- */
@@ -1074,7 +1078,9 @@ function renderCmdPopup() {
   $('cmd-warning').textContent = `${CMD_LETHAL}+ commander damage: ${game.players[cmdDst]} loses.`;
   const canRemove = lethal && game.out[cmdDst] == null;
   $('cmd-save-out').classList.toggle('hidden', !canRemove);
-  $('cmd-save-out').textContent = `Save and remove ${game.players[cmdDst]}`;
+  $('cmd-save-out').textContent = game.noTimer
+    ? `Save and mark ${game.players[cmdDst]} as lost`
+    : `Save and remove ${game.players[cmdDst]}`;
   $('cmd-save').disabled = pv.delta === 0;
 }
 
@@ -1132,7 +1138,6 @@ function setLayout(layout) {
 
 function visibleGameScreen() {
   if (!$('screen-game').classList.contains('hidden')) return 'game';
-  if (!$('screen-life').classList.contains('hidden')) return 'life';
   return null;
 }
 
@@ -1170,10 +1175,8 @@ function renderBars(rebuild) {
   const scr = visibleGameScreen();
   const active = !!(game && scr && (layout || editMode));
   layer.classList.toggle('hidden', !active);
-  $('life-list').classList.toggle('hidden', active && scr === 'life');
   $('life-strip').classList.toggle('hidden', active && scr === 'game');
   $('edit-bar').classList.toggle('hidden', !(editMode && scr));
-  $('edit-bar').classList.toggle('on-game', scr === 'game');
   $('btn-layout-game').classList.toggle('hidden', editMode);
   if (!active) { layer.innerHTML = ''; return; }
 
@@ -1206,7 +1209,7 @@ function enterEditMode() {
     const W = window.innerWidth;
     const H = window.innerHeight;
     const widgets = [...$('life-strip').children];
-    if (visibleGameScreen() === 'game' && widgets.length && widgets[0].getBoundingClientRect().width > 0) {
+    if (widgets.length && widgets[0].getBoundingClientRect().width > 0) {
       // From the timer screen: start exactly where the default widgets are.
       setLayout(widgets.map((w) => {
         const r = w.getBoundingClientRect();
@@ -1217,7 +1220,7 @@ function enterEditMode() {
     }
   }
   editMode = true;
-  renderLife(true);
+  renderLifeStrip(true);
 }
 
 /* Two centred columns, like the timer screen's default widgets (sizes measured from a real bar). */
@@ -1251,7 +1254,7 @@ function defaultGridLayout() {
 
 function exitEditMode() {
   editMode = false;
-  renderLife(true);
+  renderLifeStrip(true);
 }
 
 function normalizeAngle(a) {
@@ -1336,7 +1339,6 @@ function startBarDrag(e, bar, p) {
   bar.addEventListener('pointercancel', up);
 }
 
-$('btn-layout').addEventListener('click', enterEditMode);
 $('btn-layout-game').addEventListener('click', enterEditMode);
 $('edit-done').addEventListener('click', exitEditMode);
 armConfirm($('edit-reset'), 'Tap again to reset', () => {
@@ -1613,7 +1615,7 @@ function releaseWakeLock() {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible'
-      && (!$('screen-game').classList.contains('hidden') || !$('screen-life').classList.contains('hidden'))) {
+      && !$('screen-game').classList.contains('hidden')) {
     acquireWakeLock();
   }
 });

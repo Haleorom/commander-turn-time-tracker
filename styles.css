@@ -661,3 +661,15 @@ input.invalid { outline: 2px solid #ff8a80; }
   padding: 0;
   font-size: 1.7rem;
 }
+
+/* Single game screen (the separate life screen is gone): use the full width */
+:root { --bw: min(132px, calc((100vw - 24px - 8px) / 2)); }
+.life-strip { padding-left: 0; }
+.edit-toolbar, .edit-toolbar.on-game { left: 0; right: 0; }
+
+/* "No timer": the game screen is only a life counter */
+.no-timer .game-main,
+.no-timer .game-actions,
+.no-timer .turn-box .turn { display: none; }
+.no-timer .turn-box .profile-tag { font-size: 1.05rem; color: var(--text); }
+.no-timer .life-strip { flex: 1; align-content: center; padding-bottom: calc(16px + var(--safe-bottom)); }
