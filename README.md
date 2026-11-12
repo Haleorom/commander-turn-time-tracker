@@ -12,7 +12,7 @@ A small offline PWA that gives each player a countdown per turn in Commander gam
 ## Features
 - **Time profiles**: rows of "until turn N → m:ss"; the last row covers the rest of the game. Multiple profiles supported.
   Default: turns 1–4 3:00 · turn 5 3:30 · turn 6 4:00 · turn 7+ 6:00.
-- **Game**: choose number of players (2–8), optional names, starting life (default 40) and a profile.
+- **Game**: choose number of players (2–8), optional names, a color and icon per player (tap the round badge), the turn order (drag the ☰ handle), starting life (default 40) and a profile. The last players used are remembered for the next game.
 - **Life counter**: the ❤ strip on the right of the timer screen opens the life screen (−/+ per player, hold to repeat; *Out* removes a player from the turn order, *Back* restores them). The ⏳ strip on the left goes back. The countdown keeps running and is shown small at the top.
 - Tap the big timer to start/pause. **Hold it** (default 4 s, configurable per profile) to reset the current player's countdown to the turn's time (paused), without moving to the next player.
 - At 0 the screen turns red, the phone vibrates and the timer keeps counting overtime.

@@ -180,6 +180,21 @@
     </footer>
   </section>
 
+  <!-- PLAYER COLOR + ICON PICKER -->
+  <div id="look-sheet" class="sheet-backdrop hidden">
+    <div class="sheet" role="dialog" aria-label="Choose color and icon">
+      <div class="sheet-head">
+        <span id="look-preview"></span>
+        <strong id="look-name"></strong>
+      </div>
+      <div class="muted small">Color</div>
+      <div id="look-colors" class="swatches"></div>
+      <div class="muted small">Icon</div>
+      <div id="look-icons" class="icon-grid"></div>
+      <button id="look-done" class="btn btn-primary btn-wide">Done</button>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

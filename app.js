@@ -137,15 +137,64 @@ $('btn-resume').addEventListener('click', () => {
   if (loadGame()) show('game');
 });
 
+/* ---------- PLAYER LOOK (color + icon) ---------- */
+const PLAYER_COLORS = [
+  '#4aa3ff', '#ff5c5c', '#4ade80', '#fbbf24', '#a78bfa',
+  '#f472b6', '#2dd4bf', '#fb923c', '#e8e4d8', '#94a3b8',
+];
+const PLAYER_ICONS = [
+  '🐉', '🧙', '⚔️', '🛡️', '🔥', '💧', '🌲', '💀',
+  '☀️', '🌙', '⚡', '🦁', '🐺', '🦅', '👑', '🍄',
+  '🐙', '🕷️', '🦄', '🤖', '👻', '🌸', '❄️', '🎲',
+];
+
+function defaultLook(i) {
+  return { color: PLAYER_COLORS[i % PLAYER_COLORS.length], icon: PLAYER_ICONS[i % PLAYER_ICONS.length] };
+}
+
+// Small round badge: icon on the player's color.
+function makeBadge(color, icon, size = 'md') {
+  const b = document.createElement('span');
+  b.className = 'badge badge-' + size;
+  b.style.setProperty('--pc', color);
+  b.textContent = icon;
+  return b;
+}
+
+// Color/icon of player p in a game or history record (older records have none).
+function lookOf(g, p) {
+  const d = defaultLook(p);
+  return {
+    color: (g.colors && g.colors[p]) || d.color,
+    icon: (g.icons && g.icons[p]) || d.icon,
+  };
+}
+
 /* ---------- SETUP ---------- */
 let setupCount = 4;
-let setupNames = [];
+let setupPlayers = [];   // always MAX_PLAYERS slots: { name, color, icon }; first setupCount are in the game
+
+function loadSetupPlayers(last) {
+  const saved = last && Array.isArray(last.players) ? last.players
+    : (last && Array.isArray(last.names) ? last.names.map((name) => ({ name })) : []);   // older versions
+  const out = [];
+  for (let i = 0; i < MAX_PLAYERS; i++) {
+    const p = saved[i] || {};
+    const d = defaultLook(i);
+    out.push({
+      name: typeof p.name === 'string' ? p.name : '',
+      color: PLAYER_COLORS.includes(p.color) ? p.color : d.color,
+      icon: PLAYER_ICONS.includes(p.icon) ? p.icon : d.icon,
+    });
+  }
+  return out;
+}
 
 function openSetup() {
   const last = store.get(KEY_SETUP, null);
   setupCount = last && last.count ? last.count : 4;
   $('setup-life').value = last && Number.isInteger(last.startingLife) ? last.startingLife : DEFAULT_LIFE;
-  setupNames = last && Array.isArray(last.names) ? last.names.slice() : [];
+  setupPlayers = loadSetupPlayers(last);
   const profiles = loadProfiles();
   const sel = $('setup-profile');
   sel.innerHTML = '';
@@ -167,17 +216,123 @@ function renderSetup() {
   const box = $('player-names');
   box.innerHTML = '';
   for (let i = 0; i < setupCount; i++) {
+    const pl = setupPlayers[i];
+    const row = document.createElement('div');
+    row.className = 'setup-row';
+    row.style.setProperty('--pc', pl.color);
+
+    const handle = document.createElement('div');
+    handle.className = 'drag-handle';
+    handle.textContent = '☰';
+    handle.setAttribute('aria-label', 'Drag to reorder');
+    handle.addEventListener('pointerdown', (e) => startDrag(e, row, i));
+
+    const badgeBtn = document.createElement('button');
+    badgeBtn.className = 'badge-btn';
+    badgeBtn.setAttribute('aria-label', 'Choose color and icon');
+    badgeBtn.appendChild(makeBadge(pl.color, pl.icon, 'lg'));
+    badgeBtn.addEventListener('click', () => openLookPicker(i));
+
     const inp = document.createElement('input');
     inp.type = 'text';
     inp.maxLength = 30;
     inp.placeholder = `Player ${i + 1} (optional name)`;
-    inp.value = setupNames[i] || '';
-    inp.addEventListener('input', () => { setupNames[i] = inp.value; });
-    box.appendChild(inp);
+    inp.value = pl.name;
+    inp.addEventListener('input', () => { pl.name = inp.value; });
+
+    row.append(handle, badgeBtn, inp);
+    box.appendChild(row);
   }
   const p = loadProfiles().find((x) => x.id === $('setup-profile').value);
   $('setup-profile-summary').textContent = p ? profileSummary(p.entries) : '';
 }
+
+/* Drag to reorder (pointer events, so it works with touch). */
+function startDrag(e, row, fromIndex) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  e.preventDefault();
+  const box = $('player-names');
+  const rows = [...box.children];
+  const rects = rows.map((r) => r.getBoundingClientRect());
+  const startY = e.clientY;
+  let target = fromIndex;
+  row.classList.add('dragging');
+  e.target.setPointerCapture(e.pointerId);
+
+  const onMove = (ev) => {
+    const dy = ev.clientY - startY;
+    row.style.transform = `translateY(${dy}px)`;
+    const center = rects[fromIndex].top + rects[fromIndex].height / 2 + dy;
+    target = rects.findIndex((r) => center < r.top + r.height / 2);
+    if (target === -1) target = rows.length - 1;
+    else if (target > fromIndex) target -= 1;
+    // Shift the other rows to preview the drop position.
+    const h = rects[fromIndex].height + 8;
+    rows.forEach((r, j) => {
+      if (j === fromIndex) return;
+      let shift = 0;
+      if (fromIndex < target && j > fromIndex && j <= target) shift = -h;
+      if (fromIndex > target && j >= target && j < fromIndex) shift = h;
+      r.style.transform = shift ? `translateY(${shift}px)` : '';
+    });
+  };
+  const onUp = () => {
+    e.target.removeEventListener('pointermove', onMove);
+    e.target.removeEventListener('pointerup', onUp);
+    e.target.removeEventListener('pointercancel', onUp);
+    if (target !== fromIndex) {
+      const [moved] = setupPlayers.splice(fromIndex, 1);
+      setupPlayers.splice(target, 0, moved);
+    }
+    renderSetup();
+  };
+  e.target.addEventListener('pointermove', onMove);
+  e.target.addEventListener('pointerup', onUp);
+  e.target.addEventListener('pointercancel', onUp);
+}
+
+/* Color + icon picker (bottom sheet). */
+let pickerIndex = null;
+
+function openLookPicker(i) {
+  pickerIndex = i;
+  renderLookPicker();
+  $('look-sheet').classList.remove('hidden');
+}
+
+function renderLookPicker() {
+  const pl = setupPlayers[pickerIndex];
+  $('look-preview').innerHTML = '';
+  $('look-preview').appendChild(makeBadge(pl.color, pl.icon, 'xl'));
+  $('look-name').textContent = pl.name.trim() || `Player ${pickerIndex + 1}`;
+  const colors = $('look-colors');
+  colors.innerHTML = '';
+  for (const c of PLAYER_COLORS) {
+    const b = document.createElement('button');
+    b.className = 'swatch' + (c === pl.color ? ' selected' : '');
+    b.style.background = c;
+    b.setAttribute('aria-label', 'Color ' + c);
+    b.addEventListener('click', () => { pl.color = c; renderLookPicker(); });
+    colors.appendChild(b);
+  }
+  const icons = $('look-icons');
+  icons.innerHTML = '';
+  for (const ic of PLAYER_ICONS) {
+    const b = document.createElement('button');
+    b.className = 'icon-opt' + (ic === pl.icon ? ' selected' : '');
+    b.textContent = ic;
+    b.addEventListener('click', () => { pl.icon = ic; renderLookPicker(); });
+    icons.appendChild(b);
+  }
+}
+
+function closeLookPicker() {
+  $('look-sheet').classList.add('hidden');
+  pickerIndex = null;
+  renderSetup();
+}
+$('look-done').addEventListener('click', closeLookPicker);
+$('look-sheet').addEventListener('click', (e) => { if (e.target.id === 'look-sheet') closeLookPicker(); });
 
 $('players-dec').addEventListener('click', () => { if (setupCount > MIN_PLAYERS) { setupCount--; renderSetup(); } });
 $('players-inc').addEventListener('click', () => { if (setupCount < MAX_PLAYERS) { setupCount++; renderSetup(); } });
@@ -186,11 +341,6 @@ $('setup-profile').addEventListener('change', renderSetup);
 $('btn-start').addEventListener('click', () => {
   const profile = loadProfiles().find((x) => x.id === $('setup-profile').value);
   if (!profile) return;
-  const names = [];
-  for (let i = 0; i < setupCount; i++) {
-    const n = (setupNames[i] || '').trim();
-    names.push(n || `Player ${i + 1}`);
-  }
   const startingLife = Number($('setup-life').value);
   if (!Number.isInteger(startingLife) || startingLife < 1 || startingLife > 999) {
     $('setup-life').focus();
@@ -198,10 +348,16 @@ $('btn-start').addEventListener('click', () => {
     return;
   }
   $('setup-life').classList.remove('invalid');
+  const players = setupPlayers.slice(0, setupCount).map((pl, i) => ({
+    name: pl.name.trim() || `Player ${i + 1}`,
+    color: pl.color,
+    icon: pl.icon,
+  }));
+  // Remember all slots (also the ones beyond the current count) for the next game.
   store.set(KEY_SETUP, {
-    count: setupCount, names: setupNames.slice(0, setupCount), profileId: profile.id, startingLife,
+    count: setupCount, players: setupPlayers.map((pl) => ({ ...pl })), profileId: profile.id, startingLife,
   });
-  startGame(names, profile, startingLife);
+  startGame(players, profile, startingLife);
 });
 
 /* ---------- PROFILES LIST ---------- */
@@ -434,17 +590,22 @@ function loadGame() {
   g.startingLife = Number.isInteger(g.startingLife) ? g.startingLife : DEFAULT_LIFE;
   if (!Array.isArray(g.life) || g.life.length !== g.players.length) g.life = g.players.map(() => g.startingLife);
   if (!Array.isArray(g.out) || g.out.length !== g.players.length) g.out = g.players.map(() => null);
+  if (!Array.isArray(g.colors) || g.colors.length !== g.players.length) g.colors = g.players.map((_, i) => defaultLook(i).color);
+  if (!Array.isArray(g.icons) || g.icons.length !== g.players.length) g.icons = g.players.map((_, i) => defaultLook(i).icon);
   game = g;
   renderGame();
   startTicking();
   return true;
 }
 
-function startGame(names, profile, startingLife = DEFAULT_LIFE) {
+function startGame(players, profile, startingLife = DEFAULT_LIFE) {
+  const names = players.map((pl) => pl.name);
   game = {
     id: uid(),
     startedAt: now(),
     players: names,
+    colors: players.map((pl) => pl.color),
+    icons: players.map((pl) => pl.icon),
     profileName: profile.name,
     entries: profile.entries.map((e) => ({ ...e })),
     holdSeconds: profile.holdSeconds || DEFAULT_HOLD_SECONDS,
@@ -538,7 +699,12 @@ function resetTimer() {
 function renderGame() {
   if (!game) return;
   $('game-turn').textContent = game.turn;
-  $('game-player').textContent = game.players[game.player];
+  const look = lookOf(game, game.player);
+  const gp = $('game-player');
+  gp.innerHTML = '';
+  gp.append(makeBadge(look.color, look.icon, 'lg'), Object.assign(document.createElement('span'), { textContent: game.players[game.player] }));
+  gp.style.color = look.color;
+  $('screen-game').style.setProperty('--pc', look.color);
   $('game-profile').textContent = game.profileName;
   if (!$('screen-life').classList.contains('hidden')) renderLife(false);
   renderLifeStrip();
@@ -671,9 +837,11 @@ function renderLife(rebuild) {
     game.players.forEach((name, p) => {
       const row = document.createElement('div');
       row.className = 'life-row';
+      const look = lookOf(game, p);
+      row.style.setProperty('--pc', look.color);
       const nm = document.createElement('div');
       nm.className = 'name';
-      nm.textContent = name;
+      nm.append(makeBadge(look.color, look.icon, 'sm'), Object.assign(document.createElement('span'), { textContent: name }));
       const minus = document.createElement('button');
       minus.className = 'btn pm';
       minus.textContent = '−';
@@ -718,7 +886,9 @@ function renderLife(rebuild) {
     outBtn.setAttribute('aria-label', isOut ? `Put ${game.players[p]} back in the game` : `Remove ${game.players[p]} from the turn order`);
   });
   $('life-turn').textContent = game.turn;
-  $('life-current').textContent = game.players[game.player];
+  const cl = lookOf(game, game.player);
+  $('life-current').textContent = `${cl.icon} ${game.players[game.player]}`;
+  $('life-current').style.color = cl.color;
 }
 
 /* Read-only life totals on the timer screen. */
@@ -729,11 +899,12 @@ function renderLifeStrip() {
     game.players.forEach(() => {
       const chip = document.createElement('div');
       chip.className = 'life-chip';
+      const bd = makeBadge('#888', '', 'xs');
       const nm = document.createElement('span');
       nm.className = 'chip-name';
       const val = document.createElement('span');
       val.className = 'chip-val';
-      chip.append(nm, val);
+      chip.append(bd, nm, val);
       strip.appendChild(chip);
     });
   }
@@ -741,6 +912,11 @@ function renderLifeStrip() {
     chip.classList.toggle('current', p === game.player);
     chip.classList.toggle('out', game.out[p] != null);
     chip.classList.toggle('low', game.life[p] <= 0);
+    const lk = lookOf(game, p);
+    chip.style.setProperty('--pc', lk.color);
+    const bd = chip.querySelector('.badge');
+    bd.style.setProperty('--pc', lk.color);
+    bd.textContent = lk.icon;
     chip.querySelector('.chip-name').textContent = game.players[p];
     chip.querySelector('.chip-val').textContent = game.life[p];
   });
@@ -762,6 +938,8 @@ function openEndScreen() {
     endedAt: now(),
     profileName: game.profileName,
     players: game.players.slice(),
+    colors: game.colors.slice(),
+    icons: game.icons.slice(),
     turns: log.length ? log[log.length - 1].turn : game.turn,
     winner: null,
     startingLife: game.startingLife,
@@ -784,7 +962,7 @@ function renderWinnerChoices() {
   const box = $('winner-list');
   box.innerHTML = '';
   const options = [{ idx: null, label: 'No winner / skip' }]
-    .concat(pendingRecord.players.map((name, idx) => ({ idx, label: name })));
+    .concat(pendingRecord.players.map((name, idx) => ({ idx, label: `${lookOf(pendingRecord, idx).icon} ${name}` })));
   for (const o of options) {
     const b = document.createElement('button');
     b.className = 'btn choice' + (chosenWinner === o.idx ? ' selected' : '');
@@ -841,7 +1019,7 @@ function openHistory() {
     t.textContent = formatDate(g.startedAt);
     const s1 = document.createElement('div');
     s1.className = 'small';
-    s1.textContent = g.players.map((n, i) => (i === g.winner ? '🏆 ' + n : n)).join(', ');
+    s1.textContent = g.players.map((n, i) => `${i === g.winner ? '🏆 ' : ''}${lookOf(g, i).icon} ${n}`).join(', ');
     const s2 = document.createElement('div');
     s2.className = 'muted small';
     s2.textContent = `${g.turns} turns · ${formatDuration(sum(g.log.map((l) => l.ms)))} · ${g.profileName}`;
@@ -882,7 +1060,8 @@ function playerHeader(table, g, firstLabel) {
   g.players.forEach((name, i) => {
     const th = document.createElement('th');
     const out = g.out && g.out[i] != null ? ` (out T${g.out[i]})` : '';
-    th.textContent = (i === g.winner ? '🏆 ' : '') + name + out;
+    th.textContent = (i === g.winner ? '🏆 ' : '') + lookOf(g, i).icon + ' ' + name + out;
+    th.style.color = lookOf(g, i).color;
     thead.appendChild(th);
   });
 }
