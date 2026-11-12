@@ -117,7 +117,9 @@ function show(name) {
   for (const s of screens) $('screen-' + s).classList.toggle('hidden', s !== name);
   document.body.classList.remove('overtime');
   if (name === 'game' || name === 'life') { acquireWakeLock(); } else { releaseWakeLock(); }
+  if (name !== 'life') editMode = false;
   if (name === 'life') renderLife(true);
+  if (game) renderBars(true);
   if (name === 'menu') renderMenu();
   window.scrollTo(0, 0);
 }
@@ -795,37 +797,141 @@ armConfirm($('btn-end'), 'Tap again to end', openEndScreen);
 $('btn-to-life').addEventListener('click', () => show('life'));
 $('btn-to-time').addEventListener('click', () => { show('game'); renderGame(); });
 
+const KEY_LAYOUT = 'ctt.layout';   // { [playerCount]: [{ x, y, rot }] }, x/y = bar centre as a fraction of the viewport
+const SIDE_STRIP = 56;             // keep free bars off the ⏳ / ❤ side strips
+const PAIR_HOLD_MS = 500;          // hold + and − together this long to enter repositioning mode
+let editMode = false;
+let topZ = 1;                      // bar being moved/rotated comes to the front
+
 function changeLife(p, delta) {
   if (!game) return;
   game.life[p] += delta;
   saveGame();
-  renderLife(false);
-}
-
-/* Press = ±1, keep pressed = repeat faster. */
-function attachRepeat(btn, fn) {
-  let delay = null;
-  let interval = null;
-  const stop = () => {
-    clearTimeout(delay); clearInterval(interval);
-    delay = interval = null;
-  };
-  btn.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    e.preventDefault();
-    stop();
-    fn();
-    delay = setTimeout(() => { interval = setInterval(fn, 90); }, 450);
-  });
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => btn.addEventListener(ev, stop));
-  btn.addEventListener('contextmenu', (e) => e.preventDefault());
+  refreshLife();
 }
 
 function toggleOut(p) {
   if (!game) return;
   game.out[p] = game.out[p] == null ? game.turn : null;
   saveGame();
+  refreshLife();
+}
+
+/* +/− buttons: press = ±1, keep pressed = repeat faster.
+ * Pressing + and − of the same player together (on the life screen) enters repositioning mode. */
+const pmState = {};   // per player: { pointers, startLife, pairTimer, stops: Set }
+
+function pmFor(p) {
+  if (!pmState[p]) pmState[p] = { pointers: 0, startLife: 0, pairTimer: null, stops: new Set() };
+  return pmState[p];
+}
+
+function attachPm(btn, p, delta) {
+  let delay = null;
+  let interval = null;
+  let down = false;
+  const stop = () => {
+    clearTimeout(delay); clearInterval(interval);
+    delay = interval = null;
+  };
+  btn.addEventListener('pointerdown', (e) => {
+    if (editMode || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    e.preventDefault();
+    const st = pmFor(p);
+    if (st.pointers === 0) st.startLife = game.life[p];
+    st.pointers += 1;
+    down = true;
+    st.stops.add(stop);
+    if (st.pointers >= 2) {
+      st.stops.forEach((f) => f());     // both pressed: stop changing life and undo the first press
+      if (game.life[p] !== st.startLife) { game.life[p] = st.startLife; saveGame(); refreshLife(); }
+      if (pairAllowed()) {
+        clearTimeout(st.pairTimer);
+        st.pairTimer = setTimeout(() => enterEditMode(p), PAIR_HOLD_MS);
+      }
+      return;
+    }
+    stop();
+    changeLife(p, delta);
+    delay = setTimeout(() => { interval = setInterval(() => changeLife(p, delta), 90); }, 450);
+  });
+  const release = () => {
+    stop();
+    if (!down) return;
+    down = false;
+    const st = pmFor(p);
+    st.pointers = Math.max(0, st.pointers - 1);
+    st.stops.delete(stop);
+    clearTimeout(st.pairTimer);
+    st.pairTimer = null;
+  };
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => btn.addEventListener(ev, release));
+  btn.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function pairAllowed() {
+  return !$('screen-life').classList.contains('hidden');
+}
+
+/* One player's life row (used by the list and by the free bars). */
+function createLifeRow(p) {
+  const name = game.players[p];
+  const row = document.createElement('div');
+  row.className = 'life-row';
+  row.dataset.p = p;
+  const look = lookOf(game, p);
+  row.style.setProperty('--pc', look.color);
+  const nm = document.createElement('div');
+  nm.className = 'name';
+  nm.append(makeBadge(look.color, look.icon, 'sm'), Object.assign(document.createElement('span'), { textContent: name }));
+  const minus = document.createElement('button');
+  minus.className = 'btn pm minus';
+  minus.textContent = '−';
+  minus.setAttribute('aria-label', `Decrease ${name}'s life`);
+  const val = document.createElement('div');
+  val.className = 'life-val';
+  const plus = document.createElement('button');
+  plus.className = 'btn pm plus';
+  plus.textContent = '+';
+  plus.setAttribute('aria-label', `Increase ${name}'s life`);
+  const outBtn = document.createElement('button');
+  outBtn.className = 'btn out-btn';
+  attachPm(minus, p, -1);
+  attachPm(plus, p, +1);
+  // Removing needs a second tap; bringing a player back is a single tap.
+  let armTimer = null;
+  outBtn.addEventListener('click', () => {
+    if (editMode) return;
+    if (game.out[p] != null) { toggleOut(p); return; }
+    if (outBtn.classList.contains('confirm')) {
+      clearTimeout(armTimer);
+      outBtn.classList.remove('confirm');
+      toggleOut(p);
+      return;
+    }
+    outBtn.classList.add('confirm');
+    outBtn.textContent = 'Sure?';
+    armTimer = setTimeout(() => { outBtn.classList.remove('confirm'); refreshLife(); }, 3000);
+  });
+  row.append(nm, minus, val, plus, outBtn);
+  return row;
+}
+
+function updateLifeRow(row, p) {
+  const isOut = game.out[p] != null;
+  row.classList.toggle('current', p === game.player);
+  row.classList.toggle('out', isOut);
+  const val = row.querySelector('.life-val');
+  val.textContent = game.life[p];
+  val.classList.toggle('low', game.life[p] <= 0);
+  const outBtn = row.querySelector('.out-btn');
+  if (!outBtn.classList.contains('confirm')) outBtn.textContent = isOut ? 'Back' : 'Out';
+  outBtn.setAttribute('aria-label', isOut ? `Put ${game.players[p]} back in the game` : `Remove ${game.players[p]} from the turn order`);
+}
+
+function refreshLife() {
   renderLife(false);
+  if (!$('screen-game').classList.contains('hidden')) renderLifeStrip();
 }
 
 // rebuild = true recreates the rows (screen opened); false just updates values.
@@ -834,64 +940,17 @@ function renderLife(rebuild) {
   const list = $('life-list');
   if (rebuild || list.children.length !== game.players.length) {
     list.innerHTML = '';
-    game.players.forEach((name, p) => {
-      const row = document.createElement('div');
-      row.className = 'life-row';
-      const look = lookOf(game, p);
-      row.style.setProperty('--pc', look.color);
-      const nm = document.createElement('div');
-      nm.className = 'name';
-      nm.append(makeBadge(look.color, look.icon, 'sm'), Object.assign(document.createElement('span'), { textContent: name }));
-      const minus = document.createElement('button');
-      minus.className = 'btn pm';
-      minus.textContent = '−';
-      minus.setAttribute('aria-label', `Decrease ${name}'s life`);
-      const val = document.createElement('div');
-      val.className = 'life-val';
-      const plus = document.createElement('button');
-      plus.className = 'btn pm';
-      plus.textContent = '+';
-      plus.setAttribute('aria-label', `Increase ${name}'s life`);
-      const outBtn = document.createElement('button');
-      outBtn.className = 'btn out-btn';
-      attachRepeat(minus, () => changeLife(p, -1));
-      attachRepeat(plus, () => changeLife(p, +1));
-      // Removing needs a second tap; bringing a player back is a single tap.
-      let armTimer = null;
-      outBtn.addEventListener('click', () => {
-        if (game.out[p] != null) { toggleOut(p); return; }
-        if (outBtn.classList.contains('confirm')) {
-          clearTimeout(armTimer);
-          outBtn.classList.remove('confirm');
-          toggleOut(p);
-          return;
-        }
-        outBtn.classList.add('confirm');
-        outBtn.textContent = 'Sure?';
-        armTimer = setTimeout(() => { outBtn.classList.remove('confirm'); renderLife(false); }, 3000);
-      });
-      row.append(nm, minus, val, plus, outBtn);
-      list.appendChild(row);
-    });
+    game.players.forEach((_, p) => list.appendChild(createLifeRow(p)));
   }
-  [...list.children].forEach((row, p) => {
-    const isOut = game.out[p] != null;
-    row.classList.toggle('current', p === game.player);
-    row.classList.toggle('out', isOut);
-    const val = row.querySelector('.life-val');
-    val.textContent = game.life[p];
-    val.classList.toggle('low', game.life[p] <= 0);
-    const outBtn = row.querySelector('.out-btn');
-    if (!outBtn.classList.contains('confirm')) outBtn.textContent = isOut ? 'Back' : 'Out';
-    outBtn.setAttribute('aria-label', isOut ? `Put ${game.players[p]} back in the game` : `Remove ${game.players[p]} from the turn order`);
-  });
+  [...list.children].forEach((row, p) => updateLifeRow(row, p));
   $('life-turn').textContent = game.turn;
   const cl = lookOf(game, game.player);
   $('life-current').textContent = `${cl.icon} ${game.players[game.player]}`;
   $('life-current').style.color = cl.color;
+  renderBars(rebuild);
 }
 
-/* Read-only life totals on the timer screen. */
+/* Read-only life totals on the timer screen (used when there is no custom layout). */
 function renderLifeStrip() {
   const strip = $('life-strip');
   if (strip.children.length !== game.players.length) {
@@ -920,7 +979,155 @@ function renderLifeStrip() {
     chip.querySelector('.chip-name').textContent = game.players[p];
     chip.querySelector('.chip-val').textContent = game.life[p];
   });
+  renderBars(false);
 }
+
+/* ---------- FREE LIFE BARS (custom layout) ---------- */
+function getLayout() {
+  if (!game) return null;
+  const l = store.get(KEY_LAYOUT, {})[game.players.length];
+  return Array.isArray(l) && l.length === game.players.length ? l : null;
+}
+
+function setLayout(layout) {
+  const all = store.get(KEY_LAYOUT, {});
+  if (layout) all[game.players.length] = layout; else delete all[game.players.length];
+  store.set(KEY_LAYOUT, all);
+}
+
+function visibleGameScreen() {
+  if (!$('screen-game').classList.contains('hidden')) return 'game';
+  if (!$('screen-life').classList.contains('hidden')) return 'life';
+  return null;
+}
+
+// Keep a bar (centre cx, cy) fully on screen and off the side strips.
+function clampCenter(bar, rot, cx, cy) {
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  const sideways = rot === 90 || rot === 270;
+  const hw = (sideways ? bar.offsetHeight : bar.offsetWidth) / 2;
+  const hh = (sideways ? bar.offsetWidth : bar.offsetHeight) / 2;
+  const minX = SIDE_STRIP + hw;
+  const maxX = W - SIDE_STRIP - hw;
+  return {
+    x: minX > maxX ? W / 2 : Math.min(maxX, Math.max(minX, cx)),
+    y: Math.min(H - hh, Math.max(hh, cy)),
+  };
+}
+
+function placeBar(bar, pos) {
+  const c = clampCenter(bar, pos.rot, pos.x * window.innerWidth, pos.y * window.innerHeight);
+  bar.style.left = c.x + 'px';
+  bar.style.top = c.y + 'px';
+  bar.style.transform = `translate(-50%, -50%) rotate(${pos.rot}deg)`;
+}
+
+function renderBars(rebuild) {
+  const layer = $('bars-layer');
+  const layout = getLayout();
+  const scr = visibleGameScreen();
+  const active = !!(game && scr && (layout || editMode));
+  layer.classList.toggle('hidden', !active);
+  $('life-list').classList.toggle('hidden', active && scr === 'life');
+  $('life-strip').classList.toggle('hidden', active && scr === 'game');
+  $('edit-bar').classList.toggle('hidden', !(editMode && scr === 'life'));
+  if (!active) { layer.innerHTML = ''; return; }
+
+  if (rebuild || layer.children.length !== game.players.length) {
+    layer.innerHTML = '';
+    game.players.forEach((_, p) => {
+      const bar = createLifeRow(p);
+      bar.classList.add('free-bar');
+      const rot = document.createElement('button');
+      rot.className = 'rot-btn';
+      rot.textContent = '⟳';
+      rot.setAttribute('aria-label', 'Rotate');
+      rot.addEventListener('click', (e) => { e.stopPropagation(); bar.style.zIndex = ++topZ; rotateBar(p); });
+      rot.addEventListener('pointerdown', (e) => { e.stopPropagation(); bar.style.zIndex = ++topZ; });
+      bar.appendChild(rot);
+      bar.addEventListener('pointerdown', (e) => startBarDrag(e, bar, p));
+      layer.appendChild(bar);
+    });
+  }
+  const lay = getLayout();
+  [...layer.children].forEach((bar, p) => {
+    bar.classList.toggle('editing', editMode);
+    updateLifeRow(bar, p);
+    if (lay) placeBar(bar, lay[p]);
+  });
+}
+
+function enterEditMode(p) {
+  if (!game) return;
+  const st = pmFor(p);
+  game.life[p] = st.startLife;       // undo whatever the two presses changed
+  saveGame();
+  Object.keys(pmState).forEach((k) => delete pmState[k]);
+  if (!getLayout()) {
+    // Start from where the rows are in the list right now.
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    setLayout([...$('life-list').children].map((row) => {
+      const r = row.getBoundingClientRect();
+      return { x: (r.left + r.width / 2) / W, y: (r.top + r.height / 2) / H, rot: 0 };
+    }));
+  }
+  editMode = true;
+  if (navigator.vibrate) navigator.vibrate(60);
+  renderLife(true);
+}
+
+function exitEditMode() {
+  editMode = false;
+  renderLife(true);
+}
+
+function rotateBar(p) {
+  const layout = getLayout();
+  if (!layout) return;
+  layout[p].rot = (layout[p].rot + 90) % 360;
+  setLayout(layout);
+  renderBars(false);
+}
+
+function startBarDrag(e, bar, p) {
+  if (!editMode || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  e.preventDefault();
+  const layout = getLayout();
+  const pos = layout[p];
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  const origin = clampCenter(bar, pos.rot, pos.x * W, pos.y * H);
+  bar.setPointerCapture(e.pointerId);
+  bar.style.zIndex = ++topZ;
+  bar.classList.add('dragging');
+  const move = (ev) => {
+    const c = clampCenter(bar, pos.rot, origin.x + ev.clientX - startX, origin.y + ev.clientY - startY);
+    pos.x = c.x / W;
+    pos.y = c.y / H;
+    placeBar(bar, pos);
+  };
+  const up = () => {
+    bar.removeEventListener('pointermove', move);
+    bar.removeEventListener('pointerup', up);
+    bar.removeEventListener('pointercancel', up);
+    bar.classList.remove('dragging');
+    setLayout(layout);
+  };
+  bar.addEventListener('pointermove', move);
+  bar.addEventListener('pointerup', up);
+  bar.addEventListener('pointercancel', up);
+}
+
+$('edit-done').addEventListener('click', exitEditMode);
+armConfirm($('edit-reset'), 'Tap again to reset', () => {
+  setLayout(null);
+  exitEditMode();
+});
+window.addEventListener('resize', () => { if (game) renderBars(false); });
 
 /* ---------- END OF GAME ---------- */
 let pendingRecord = null;

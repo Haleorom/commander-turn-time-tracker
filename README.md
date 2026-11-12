@@ -19,6 +19,7 @@ A small offline PWA that gives each player a countdown per turn in Commander gam
 - **Next player** resets the countdown to the current turn's time and starts it immediately; after the last player the turn number goes up.
 - **Undo** restores the state before the last *Next player* (paused, with the time that was left). Can be repeated.
 - **End game** → optionally pick the winner → *Save game* (or *Discard*).
+- **Custom life layout**: on the life screen, hold a player's − and + together (two fingers, ~0.5 s) to enter repositioning mode. Drag any bar anywhere, ⟳ rotates it by 90°, *Done* saves, *Reset layout* goes back to the list. The layout is saved per number of players and the bars appear in the same place, fully usable, on the timer screen too.
 - **Games history**: every saved game with the time each player used on every turn (pauses excluded), plus total / average / longest turn per player, and a *Life* view with every player's life after each *Next player* press.
 - Game in progress, history, profiles and last setup are kept in `localStorage`, so they survive closing the app or restarting the phone.
 - Keeps the screen awake during a game (Screen Wake Lock API).
