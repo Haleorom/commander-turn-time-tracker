@@ -826,9 +826,46 @@ let topZ = 1;                      // bar being moved/rotated comes to the front
 
 function changeLife(p, delta) {
   if (!game) return;
+  trackLifeChange(p);
   game.life[p] += delta;
   saveGame();
   refreshLife();
+}
+
+/* Running total popup: every −/+ press joins the current "change" of that player; the popup shows
+ * the total since the first press (e.g. −7) with an undo button, and closes CHANGE_WINDOW_MS after
+ * the last press. */
+const CHANGE_WINDOW_MS = 3000;
+const lifeChanges = {};   // per player: { start, timer }
+
+function trackLifeChange(p) {
+  let ch = lifeChanges[p];
+  if (!ch) ch = lifeChanges[p] = { start: game.life[p], timer: null };
+  clearTimeout(ch.timer);
+  ch.timer = setTimeout(() => { delete lifeChanges[p]; refreshLife(); }, CHANGE_WINDOW_MS);
+}
+
+function undoLifeChange(p) {
+  const ch = lifeChanges[p];
+  if (!game || !ch) return;
+  clearTimeout(ch.timer);
+  game.life[p] = ch.start;
+  delete lifeChanges[p];
+  saveGame();
+  refreshLife();
+}
+
+function updateChangePopup(row, p) {
+  const pop = row.querySelector('.delta-pop');
+  if (!pop) return;
+  const ch = lifeChanges[p];
+  pop.classList.toggle('show', !!ch);
+  if (!ch) return;
+  const d = game.life[p] - ch.start;
+  pop.querySelector('.delta-val').textContent = d > 0 ? `+${d}` : d < 0 ? `−${-d}` : '±0';
+  pop.classList.toggle('pos', d > 0);
+  pop.classList.toggle('neg', d < 0);
+  pop.querySelector('.delta-undo').disabled = d === 0;
 }
 
 function toggleOut(p) {
@@ -887,9 +924,20 @@ function createLifeRow(p) {
   plus.setAttribute('aria-label', `Increase ${name}'s life`);
   attachPm(minus, p, -1);
   attachPm(plus, p, +1);
+  const pop = document.createElement('div');
+  pop.className = 'delta-pop';
+  const pv = document.createElement('span');
+  pv.className = 'delta-val';
+  const undoBtn = document.createElement('button');
+  undoBtn.className = 'delta-undo';
+  undoBtn.textContent = '↶';
+  undoBtn.setAttribute('aria-label', `Undo this change to ${name}'s life`);
+  undoBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+  undoBtn.addEventListener('click', (e) => { e.stopPropagation(); undoLifeChange(p); });
+  pop.append(pv, undoBtn);
   const cmdList = document.createElement('div');
   cmdList.className = 'cmd-list';
-  row.append(nm, minus, val, plus, cmdList);
+  row.append(nm, minus, val, plus, cmdList, pop);
   return row;
 }
 
@@ -899,6 +947,7 @@ function updateLifeRow(row, p) {
   const val = row.querySelector('.life-val');
   val.textContent = game.life[p];
   val.classList.toggle('low', game.life[p] <= 0);
+  updateChangePopup(row, p);
   renderCmdList(row.querySelector('.cmd-list'), p);
 }
 
